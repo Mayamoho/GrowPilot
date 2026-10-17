@@ -15,13 +15,13 @@ When businesses try to use AI to find leads or answer customer messages on Whats
 2. **The AI invents numbers, awards, or promises you never made.**
    - Left unchecked, language models love to "hallucinate" — congratulating a prospect on a funding round that never happened, inventing a statistic that wasn't on their website, or quoting the wrong price to a customer.
 
-**GrowPilot solves both problems by putting plain, deterministic TypeScript code in front of and behind the AI model.** Code strips the HTML junk, code checks a fast local cache before spending a single token, code scores whether a prospect is worth emailing, and code verifies every number in the final output against the source text. The AI model is only called when you genuinely need fresh writing or live lead qualification — and even then, it uses small, fast models (`Gemini 3.1 Flash-Lite`, `Gemini 3.8 Flash`, or a free local `Ollama Llama 3.2 3B` container).
+**GrowPilot solves both problems by putting plain, deterministic TypeScript code in front of and behind the AI model.** Code strips the HTML junk, code checks a fast local cache before spending a single token, code scores whether a prospect is worth emailing, and code verifies every number in the final output against the source text. The AI model is only called when you genuinely need fresh writing or live lead qualification — and even then, it uses small, fast models (`Gemini 3.1 Flash-Lite`, `Gemini 3.5 Flash`, or a free local `Ollama Llama 3.2 3B` container).
 
 ---
 
 ## Live Links (Try It in Your Browser)
 
-You can test the full application right now without installing anything:
+You can test the application right now without installing anything:
 
 | Live URL | What It Opens |
 |---|---|
@@ -30,6 +30,19 @@ You can test the full application right now without installing anything:
 | **[https://agent.abukawser.xyz](https://agent.abukawser.xyz)** | **Dedicated 24/7 Customer Agent View** — opens directly into Tab 2 (`Cached FAQ Answering & Autonomous Booking Agent`). |
 
 > **How the subdomains work:** All three URLs point to the same codebase. On page load, `src/App.tsx` checks `window.location.hostname`: if the hostname starts with `agent.`, it opens the **24/7 FAQ & Booking Agent** tab automatically; otherwise it opens the **GTM Pipeline** tab. You can also link directly to any tab with `?tab=gtm-studio`, `?tab=whatsapp-agent`, or `?tab=cost-lab`.
+
+> ### ⚠️ What the Vercel URLs are — and what they are not
+> Those three URLs serve `npm run build` output: **static files only**. Vercel is not running `server.ts`, so the deployed demo is the browser fallback path in `src/App.tsx`.
+>
+> | Works on the Vercel demo | Only works with the Node/Docker backend |
+> |---|---|
+> | HTML boilerplate stripper, Layer 0 FAQ & GTM result caches, ICP gate, 5-layer groundedness verifier, token/cost math, CSV export, FAQ rule editor | Real model calls (Gemini or local Ollama) |
+> | Lead qualification logic, deterministic outreach copy, cost telemetry | Live voice agent (`/live` WebSocket → Gemini Live API + `book_discovery_call`) |
+> | | Prospect URL fetching (server-side, SSRF-guarded) |
+> | | n8n webhook delivery (`lead.qualified`, `gtm.lead_generated`) |
+> | | CRM/FAQ/GTM persistence across restarts (`.data/growpilot-state.json`) |
+>
+> On the static demo every run is labelled **`Deterministic template (no model billed)`** with a `$0.00` cost, and the agent panel reports **`N8N_WEBHOOK_URL NOT CONFIGURED`** — because no model and no n8n are actually being called. Run `npm run dev` or `docker compose up` with a real `GEMINI_API_KEY` to exercise the full agent (see [Step-by-Step Local Setup](#step-by-step-local-setup--installation)).
 
 ---
 
@@ -47,10 +60,10 @@ GrowPilot is organized into **three focused tabs** in the top navigation bar (pl
 
 * **Built-In Preset Buttons (4 One-Click Use Cases):**
   At the top of the form, you can click any of the four preset buttons to load realistic HTML samples with `<script>`, `<style>`, `<nav>`, and `<footer>` clutter included:
-  1. **`DentaCare Aesthetic & Implant Center`** *(High-Fit Local Clinic Use Case)*: A 12-chair dental clinic serving 450 monthly patients and spending `$1,400/mo` on ads, but losing after-8 PM WhatsApp inquiries because receptionists reply manually the next afternoon. Scores **`96/100`** and generates grounded multi-channel outreach.
-  2. **`CloudScale B2B Commerce & Logistics`** *(High-Fit B2B SaaS Use Case)*: A B2B commerce platform serving 320 retail merchants with 90 weekly demo requests and a 14-hour manual response delay. Scores **`98/100`** and drafts B2B outreach.
-  3. **`Production LLM Cost & Caching Digest`** *(Technical Article-to-Content Use Case)*: An engineering article about cutting AI agent costs by 92% with Layer 0 caching. Demonstrates how you can paste an industry article to extract key facts and generate a grounded LinkedIn/Social post.
-  4. **`Vintage Postcard Collectors Archive`** *(Low-ICP Token-Saving Gate Use Case)*: A personal non-commercial hobby blog (`"I do not sell anything, offer no commercial services, and do not take bookings"`). Scores **`5/100`** so you can watch the **ICP Score Gate** halt the pipeline and spend **0 outbound generation tokens**.
+  1. **`DentaCare Aesthetic & Implant Center`** *(High-Fit Local Clinic Use Case)*: A 12-chair dental clinic serving 450 monthly patients and spending `$1,400/mo` on ads, but losing after-8 PM WhatsApp inquiries because receptionists reply manually the next afternoon. Scores **`76/100`** at the default `60` gate and generates grounded multi-channel outreach.
+  2. **`CloudScale B2B Commerce & Logistics`** *(High-Fit B2B SaaS Use Case)*: A B2B commerce platform serving 320 retail merchants with 90 weekly demo requests and a 14-hour manual response delay. Scores **`96/100`** and drafts B2B outreach.
+  3. **`Production LLM Cost & Caching Digest`** *(Technical Article-to-Content Use Case)*: An engineering article about cutting AI agent costs by 92% with Layer 0 caching (`98/100`). Demonstrates how you can paste an industry article to extract key facts and generate a grounded LinkedIn/Social post.
+  4. **`Vintage Postcard Collectors Archive`** *(Low-ICP Token-Saving Gate Use Case)*: A personal non-commercial hobby blog (`"I do not sell anything, offer no commercial services, and do not take bookings"`). Scores **`7/100`** so you can watch the **ICP Score Gate** halt the pipeline and spend **0 outbound generation tokens**.
 
 * **Input Fields (For Your Own Prospects):**
   - **`Company or Article Title`**: Name of the target business or article (e.g., `DentaCare Aesthetic & Implant Center`).
@@ -60,13 +73,15 @@ GrowPilot is organized into **three focused tabs** in the top navigation bar (pl
 
 * **`Execution Model Tier` Dropdown (Which Model Runs the Pipeline):**
   You can choose which AI model drafts the outreach copy once a lead passes the ICP gate:
-  - **`Ollama Llama 3.2 3B (Ubuntu Local · $0.00)`**: Runs 100% locally inside your Ubuntu Docker container at **$0.00 per token**. Ideal for bulk lead enrichment when you want zero cloud API bills.
-  - **`Gemini 3.1 Flash-Lite ($0.075 / 1M tok)`**: Ultra-fast, ultra-low-cost Google Gemini tier for high-speed extraction and concise outreach.
-  - **`Gemini 3.8 Flash ($0.15 / 1M tok)`**: Default balanced tier for rich structured JSON generation across all four outbound channels (Email, Follow-Up, WhatsApp, and Social Post).
+  - **`Ollama Llama 3.2 3B (Ubuntu Local · $0.00)`**: Runs 100% locally — the server POSTs to `${OLLAMA_BASE_URL}/api/chat` inside your Ubuntu Docker container at **$0.00 per token**. Ideal for bulk lead enrichment when you want zero cloud API bills. If Ollama is unreachable the run falls back to the deterministic template and the output header says so instead of pretending a model answered.
+  - **`Gemini 3.1 Flash-Lite ($0.25 in / $1.50 out · per 1M tok)`**: Ultra-fast, low-cost Google Gemini tier for high-speed extraction and concise outreach.
+  - **`Gemini 3.5 Flash ($0.50 in / $3.00 out · per 1M tok)`**: Default balanced tier for rich structured JSON generation across all four outbound channels (Email, Follow-Up, WhatsApp, and Social Post).
+
+  > Model IDs and prices are read from `MODEL_TIERS` in `src/utils/agentEngine.ts` and can be overridden per deployment with `GEMINI_MODEL_FLASH_LITE`, `GEMINI_MODEL_FLASH` and `GEMINI_MODEL_LIVE` — Google rotates preview IDs, so a stale ID is a `.env` edit rather than a code change.
 
 * **`Minimum ICP Score Gate` Slider (`35 / 100` to `85 / 100`, default `60 / 100`):**
   Sets your quality bar before calling the generation model.
-  - In `src/utils/agentEngine.ts`, `evaluateIcpFit()` scores the stripped webpage from `0` to `100` based on five positive commercial signals (appointment/booking flows `+24`, inbound lead/sales volume `+22`, manual response bottlenecks `+20`, commercial packages/pricing `+18`, contact readiness `+14`) and subtracts `-45` for non-commercial/hobby signals.
+  - In `src/utils/agentEngine.ts`, `evaluateIcpFit()` scores the stripped webpage from a base of `12` using five positive commercial signals (appointment/booking flows `+24`, inbound lead/sales volume `+22`, manual response bottlenecks `+20`, commercial packages/pricing `+18`, contact readiness `+14`), subtracts `-45` for non-commercial/hobby signals, and clamps the result to `5–98`. Scoring is pure regex on your own text — no model call, no tokens.
   - **How to use it:** Keep it at `60` for standard B2B outreach, or raise it to `75–85` if you only want to spend tokens on prospects with explicit booking and automation bottlenecks. If a prospect scores below your slider, GrowPilot marks it `SKIPPED_LOW_ICP` and skips outbound generation completely.
 
 * **Action Buttons (`Run GTM Pipeline`, `Force Fresh LLM Run`, and `Reset Layer 0 Cache`):**
@@ -93,7 +108,7 @@ Every time you run a prospect (or click a row in the CRM table below), the right
   3. **`LinkedIn / Social Post`**: Shows a ready-to-publish social media post turning the prospect case study or article into an educational post, with a **`Copy Social Post`** button.
   4. **`5-Layer Groundedness Audit`**: Shows the pass/block status of all five deterministic checks run by `verifyGroundedness()`:
      - **Layer 1 (`Entity & Target Attribution Gate`)**: Confirms the target company name is actually present in the generated copy.
-     - **Layer 2 (`Numerical & Metric Fidelity Gate`)**: Checks every number in the generated copy against the digits in the source text (`allowedNumbers`). If a model invents a fake statistic not found in the source, Layer 2 blocks it.
+     - **Layer 2 (`Numerical & Metric Fidelity Gate`)**: Checks every number in the generated copy against the digits in the source text (`allowedNumbers`). If a model invents a fake statistic not found in the source, Layer 2 blocks it. **Known limit, measured not assumed:** this proves a figure *exists* in the source, not that the source used it the same way — a model can lift `"10 AM"` and write `"a 10-minute call"`. A word-window around each number was tried against live Gemini output and reverted: it blocked honest paraphrase (`$1,400/mo` vs `$1,400 monthly on social ads`) and matched on the prospect's own name instead of meaning. The mitigation therefore sits upstream (temperature `0.2` plus an instruction to keep a source number's original unit and to write no number at all for an unstated duration, discount or fee), and Layer 2 stays a check that is provably right rather than one that merely looks strict.
      - **Layer 3 (`Extracted Fact Grounding Check`)**: Confirms at least 75% of the extracted hooks share real word roots with the stripped webpage.
      - **Layer 4 (`Anti-Hallucination & Claim Filter`)**: Blocks fake awards, unverified funding rounds, and exaggerated ROI promises.
      - **Layer 5 (`Prompt-Injection & Safety Screen`)**: Screens both the scraped HTML and generated copy for adversarial instruction-override attacks (`ignore previous instructions`, etc.).
@@ -113,7 +128,7 @@ Every prospect you analyze is automatically logged into the table at the bottom 
 
 ### Tab 2: `24/7 FAQ & Booking Agent` (`Cached FAQ Answering & Autonomous Booking Agent`)
 
-**What this tab is for:** Simulating and managing a 24/7 inbound customer assistant (for WhatsApp Business and website chat widgets) that answers recurring FAQs in under 5 milliseconds for **0 tokens ($0.00)**, keeps chat memory capped at **6 turns**, qualifies a lead's monthly budget, and automatically books discovery calls into your CRM — via both **text chat** and **real-time voice calls (`Gemini 3.8 Live`)**.
+**What this tab is for:** Simulating and managing a 24/7 inbound customer assistant (for WhatsApp Business and website chat widgets) that answers recurring FAQs in under 5 milliseconds for **0 tokens ($0.00)**, keeps chat memory capped at **6 turns**, qualifies a lead's monthly budget, and automatically books discovery calls into your CRM — via both **text chat** and **real-time voice calls (`Gemini 3.1 Flash Live`)**.
 
 ---
 
@@ -127,16 +142,16 @@ The **`Channel`** selector lets you choose which customer entry point you are si
 - **`Channel: Embedded Website Widget`**: Simulates a visitor chatting through the floating chat bubble on your website.
 - **What changing `Channel` does:** It updates the live conversation header (`Live WhatsApp Business Conversation` vs. `Live Embedded Website Widget Conversation`) and tags every qualified lead booked during that session with the exact source channel (`WhatsApp Business` or `Website Widget`) inside the **Live Google Sheets / CRM Qualification & Booking Log** table at the bottom of the page.
 
-##### B. What is the `Model` Dropdown? (`Model: Ollama Llama 3.2 3B ($0.00)`, `Model: Gemini 3.1 Flash-Lite`, `Model: Gemini 3.8 Flash`)
+##### B. What is the `Model` Dropdown? (`Model: Ollama Llama 3.2 3B ($0.00)`, `Model: Gemini 3.1 Flash-Lite`, `Model: Gemini 3.5 Flash`)
 The **`Model`** dropdown selects the **Fallback LLM Tier** used when a message is **not** in the Layer 0 FAQ Cache:
 - **When a customer asks a cached FAQ** (like *"What are your pricing plans?"*), the **`Layer 0 FAQ Cache`** intercepts the question in code and replies in `<5ms` for **0 tokens ($0.00)** — so the model isn't billed at all.
 - **When a customer sends a novel question or shares their business details and budget**, GrowPilot routes the turn (along with the last 6 messages of chat history) to whichever model you selected:
   - **`Ollama Llama 3.2 3B ($0.00)`**: Uses your local open-source model in Docker for `$0.00` token cost.
-  - **`Gemini 3.1 Flash-Lite`**: Default high-speed qualifier (`$0.075 / 1M` input tokens — roughly `$0.00003` per chat turn).
-  - **`Gemini 3.8 Flash`**: Higher-capacity reasoning model (`$0.15 / 1M` input tokens) for complex multi-part questions.
+  - **`Gemini 3.1 Flash-Lite`**: Default high-speed qualifier (`$0.25 / 1M` input, `$1.50 / 1M` output — roughly `$0.0001` per chat turn).
+  - **`Gemini 3.5 Flash`**: Higher-capacity reasoning model (`$0.50 / 1M` input, `$3.00 / 1M` output) for complex multi-part questions.
 
 ##### C. How to Use `Open Live Voice Call (Gemini Live)` Step-by-Step
-Clicking **`Open Live Voice Call (Gemini Live)`** expands the **Real-Time Voice Qualification & Booking Call** panel right above the chat simulator. This connects your browser over a bidirectional WebSocket (`/live`) to **`gemini-3.8-live`**.
+Clicking **`Open Live Voice Call (Gemini Live)`** expands the **Real-Time Voice Qualification & Booking Call** panel right above the chat simulator. This connects your browser over a bidirectional WebSocket (`/live`) to **`gemini-3.1-flash-live-preview`** (override with `GEMINI_MODEL_LIVE`).
 
 Here is how to run a live voice call:
 1. **Pick a `Voice Persona`** from the dropdown before starting the call:
@@ -147,13 +162,14 @@ Here is how to run a live voice call:
    - `Charon (Calm Specialist)` — steady, reassuring advisor tone
 2. **Click `Start Live Voice Call`**:
    - Your browser requests microphone permission and opens a `16kHz` PCM audio stream to `/live`, while setting up a gapless `24kHz` Web Audio playback queue for the agent's spoken responses.
-   - *(Note: Live voice streaming requires the Node.js or Docker backend running with a valid `GEMINI_API_KEY` in `.env`).*
+   - *(Note: Live voice streaming requires the Node.js or Docker backend running with a valid `GEMINI_API_KEY` in `.env`. On Vercel's static deployment the `/live` socket is not available.)*
 3. **Speak Naturally — or Use the One-Click Spoken Prompt Buttons:**
    - Once the status indicator shows **`Status: CONNECTED`**, you can either speak directly into your microphone (and use **`Mute Mic` / `Unmute Mic`** anytime) **or** click one of the two quick-trigger buttons even if you don't want to talk out loud:
      - **`Ask Voice Agent About Pricing`**: Sends *"Hi! Can you tell me how much your 24/7 WhatsApp AI agent and n8n package costs per month?"* and plays the agent's spoken answer while streaming the live transcript.
      - **`Qualify & Book $900/mo Clinic Call`**: Sends *"We are SmileCare Dental Clinic in Dhaka with a $900 monthly budget. Please book a discovery call for Tue 22 Oct at 4:00 PM BDT."*
 4. **Watch the Live Tool Call (`book_discovery_call`) Book the Appointment:**
-   - When you tell the voice agent your business need and monthly budget, `gemini-3.8-live` invokes the `book_discovery_call` function declaration in real time, displays a green confirmation banner (`Voice Discovery Call Booked via Live Tool Call`), and immediately adds the new booking row to the **Live Google Sheets / CRM Qualification & Booking Log** table at the bottom of the page.
+   - When you tell the voice agent your business need and monthly budget, `gemini-3.1-flash-live-preview` invokes the `book_discovery_call` function declaration in real time, displays a green confirmation banner (`Voice Discovery Call Booked via Live Tool Call`), and immediately adds the new booking row to the **Live Google Sheets / CRM Qualification & Booking Log** table at the bottom of the page.
+   - **Verified against the live API**, a two-turn call ("12-chair Dhaka dental clinic, $1,400/mo on ads, losing enquiries after 8 PM" → "Tue 10 AM BDT works") produced spoken audio, then the tool call, then a real CRM row: `HOT_BOOKED`, `bookedSlot: "Tue 20 Oct, 10:00 AM BDT"`, `modelUsed: gemini-3.1-flash-live-preview`, 320 tokens / `$0.00019`, and `automationStatus: "delivered"` once n8n accepted the `lead.qualified` POST. The table is the app's own CRM log — a Google Sheet or Calendar row is whatever you wire downstream of the webhook in n8n.
 5. **Click `End Live Voice Call`** when finished to close the WebSocket and release the microphone.
 
 ---
@@ -241,8 +257,8 @@ Every time a message is sent in the chat simulator, the right panel shows the ex
 
 Compares the exact monthly cost for your active calls across all four model tiers:
 1. **`Ollama Llama 3.2 3B (Ubuntu 24.04 Local)`**: `$0.000` input / `$0.00` output → **`$0.00/mo`** (100% savings).
-2. **`Gemini 3.1 Flash-Lite`**: `$0.075 / 1M` input / `$0.30 / 1M` output → **`$0.27/mo`** at 15,000 monthly requests (saves `$97.83/mo` vs. baseline).
-3. **`Gemini 3.8 Flash`**: `$0.150 / 1M` input / `$0.60 / 1M` output → **`$0.53/mo`** at 15,000 monthly requests (saves `$97.57/mo` vs. baseline).
+2. **`Gemini 3.1 Flash-Lite`**: `$0.25 / 1M` input / `$1.50 / 1M` output → **`$1.19/mo`** at 15,000 monthly requests (saves `$96.91/mo` vs. baseline).
+3. **`Gemini 3.5 Flash`**: `$0.50 / 1M` input / `$3.00 / 1M` output → **`$2.39/mo`** at 15,000 monthly requests (saves `$95.71/mo` vs. baseline).
 4. **`Unoptimized Frontier Model (Baseline)`**: Shows what the exact same 15,000 monthly requests cost when you send unstripped HTML (`4x` input tokens) and uncached FAQs to a `$3.00 / $15.00 per 1M` frontier model (**`$98.10/mo`**).
 
 #### 3. Bottom Panel: `Prompt Engineering Discipline` Comparison
@@ -288,7 +304,7 @@ npm install --legacy-peer-deps
 npm test
 ```
 
-All 7 pure-logic unit tests in `src/utils/agentEngine.test.ts` run in under half a second with no API key or internet connection required:
+All 10 pure-logic unit tests in `src/utils/agentEngine.test.ts` run in under half a second with no API key or internet connection required:
 
 ```text
 ✔ stripHtmlAndBoilerplate removes scripts, styles, nav, footer and saves tokens
@@ -298,14 +314,17 @@ All 7 pure-logic unit tests in `src/utils/agentEngine.test.ts` run in under half
 ✔ verifyGroundedness 5-layer gate passes truthful claims and catches fabricated numbers
 ✔ trimConversationWindow caps memory at 6 messages and reports saved tokens
 ✔ formatGtmLeadsCsv exports company name, industry, and ICP match score properly
-ℹ tests 7 | pass 7 | fail 0
+✔ calculateRunCost bills nothing when no model was actually called
+✔ nextAvailableSlot returns a future weekday slot instead of a fixed date string
+✔ isPrivateOrLoopbackIp blocks metadata, private and link-local addresses
+ℹ tests 10 | pass 10 | fail 0
 ```
 
 #### Step 4: (Optional) Add a free Gemini API key
 
 GrowPilot's HTML stripper, Layer 0 FAQ cache, ICP scorer, 5-layer groundedness verifier, CSV exporter, and deterministic fallback engine all work **100% offline with no API key**.
 
-If you want live cloud generation from `gemini-3.1-flash-lite`, `gemini-3.8-flash`, or real-time voice calls via `gemini-3.8-live`:
+If you want live cloud generation from `gemini-3.1-flash-lite`, `gemini-3.5-flash`, or real-time voice calls via `gemini-3.1-flash-live-preview`:
 
 ```bash
 cp .env.example .env
@@ -317,7 +336,23 @@ Open `.env` and paste a free API key from [Google AI Studio (`aistudio.google.co
 GEMINI_API_KEY="AIzaSyYourKeyHere"
 PORT=3000
 OLLAMA_MODEL="llama3.2:3b"
+OLLAMA_BASE_URL="http://127.0.0.1:11434"
+N8N_WEBHOOK_URL="http://127.0.0.1:5678/webhook/growpilot-lead"
+GEMINI_MAX_ATTEMPTS="4"
+GEMINI_QUOTA_FALLBACK="1"
 ```
+
+> `GEMINI_API_KEY` is the only value the AI paths truly require. Everything else has a working default.
+
+**What happens when a model tier says no** (observed on a real free-tier key, not hypothetical):
+
+| Response | GrowPilot's behaviour |
+|---|---|
+| `503 high demand`, `429 rate limit` | Retries with exponential backoff capped at 12s plus jitter, up to `GEMINI_MAX_ATTEMPTS` tries. |
+| `429 exceeded your current quota / check your plan and billing` | Permanent for that tier. GrowPilot re-answers with `gemini-3.1-flash-lite`, bills the run at the tier that actually replied, and writes `gemini-3.5-flash is out of quota for this key; copy was generated and billed by gemini-3.1-flash-lite.` into the run's audit strip. |
+| Any other failure | Deterministic template, labelled `Deterministic template (no model billed)` with `$0.00` and `modelCalled: false`. Never a silent lie. |
+
+That degrade is this project's own thesis — route to the smallest model that answers — so it is on by default. Set `GEMINI_QUOTA_FALLBACK=""` (or `0`) to make a quota-blocked tier surface the error instead of quietly re-billing a cheaper model.
 
 #### Step 5: Start the full-stack server on Port 3000
 
@@ -363,9 +398,36 @@ docker compose down
 
 ---
 
+## Automation Contract: What GrowPilot Actually Sends
+
+GrowPilot is the **agent**; n8n is the **arm that reaches your spreadsheet, calendar and WhatsApp**. The server POSTs to `N8N_WEBHOOK_URL` whenever something worth acting on happens. Build one workflow with a *Webhook (POST)* trigger at path `growpilot-lead` and everything below lands in it.
+
+| Event | Fires when | Payload keys |
+|---|---|---|
+| `lead.qualified` | A chat or voice caller shares a budget and is scored `HOT_BOOKED` / `WARM_NURTURE` | `lead_name`, `business_type`, `channel`, `need_summary`, `extracted_budget_usd`, `lead_score`, `intent`, `booked_slot`, `tokens_used`, `cost_usd` |
+| `gtm.lead_generated` | A scraped prospect clears the ICP gate and outbound copy is produced | same shape, with `lead_score` = `QUALIFIED_OUTBOUND` and `channel` = `GTM Outbound` |
+
+Both calls carry HTTP Basic auth when `N8N_USER` / `N8N_PASSWORD` are set, time out after 6s, and **never fail the user-facing request** — a down automation must not break a customer's chat. Instead the truth is shown in the UI and in `GET /api/state` under `automation`:
+
+- `delivered` — n8n accepted the lead
+- `failed` — it was configured but rejected or was unreachable
+- `not_configured` — `N8N_WEBHOOK_URL` is empty, so nothing left the server
+
+`GET /api/state` also reports `engine`: whether a `GEMINI_API_KEY` is present, the resolved Ollama base URL, and the live voice model ID.
+
+**Booking slots** are computed by `nextAvailableSlot()` — the next free 30-minute weekday slot in BDT business hours, advancing past booked capacity. Nothing queries a real Google Calendar; to make the slot a real calendar event, add a *Google Calendar* node downstream of the webhook in n8n.
+
+**Persistence**: FAQ rules, CRM bookings, GTM records and the telemetry ledger are written to `.data/growpilot-state.json` (Docker: the `growpilot_data` volume at `/data`) and restored on boot, so captured leads survive a restart. The static Vercel deployment has no server, so it runs the same engine in the browser with an in-memory cache only.
+
+**Security note on the scraper**: `/api/gtm/analyze` fetches user-supplied URLs. It rejects non-HTTP(S) schemes, resolves the hostname and refuses any address in loopback, RFC1918, link-local (including the `169.254.169.254` cloud metadata range), CGNAT or IPv6 unique-local space, follows redirects manually with the same check on every hop, and caps the response at 400 KB. Without this, the endpoint was an open proxy into the Docker network — `n8n:5678` sits on that network.
+
+---
+
 ## Deploying on Vercel & Linking Subdomains
 
 GrowPilot works both when connected to the Node/Docker Express server **and** when deployed as a static app on Vercel (when `/api/*` is not present on a static host, `src/App.tsx` automatically executes the same `agentEngine` functions directly in the browser).
+
+> Static deployment is a genuine demo of the deterministic engine, not the full agent: no model is billed, no prospect URL is fetched, no n8n webhook fires, and the live-voice tab cannot connect (it needs the server's `/live` WebSocket). See [What the Vercel URLs are — and what they are not](#-what-the-vercel-urls-are--and-what-they-are-not).
 
 1. Push your repository to GitHub.
 2. Import the repository into **[Vercel](https://vercel.com/new)** with:

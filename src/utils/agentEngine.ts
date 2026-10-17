@@ -1,24 +1,32 @@
 export type ModelTierId =
   | 'ollama-llama3.2-3b'
   | 'gemini-3.1-flash-lite'
-  | 'gemini-3.8-flash'
+  | 'gemini-3.5-flash'
   | 'frontier-baseline';
 
 export interface ModelTierSpec {
   id: ModelTierId;
   label: string;
   provider: string;
+  /** Upstream model ID actually sent to the provider API. Overridable per deployment. */
+  apiModelId: string;
   inputCostPerMillionUsd: number;
   outputCostPerMillionUsd: number;
   avgLatencyMs: number;
   recommendedFor: string;
 }
 
+/**
+ * Prices are the Google AI (Developer API) paid tier, text in/out, no caching.
+ * See https://ai.google.dev/gemini-api/docs/pricing — they drift, so every value here
+ * is overridable per deployment (see resolveModelTiers in server.ts).
+ */
 export const MODEL_TIERS: Record<ModelTierId, ModelTierSpec> = {
   'ollama-llama3.2-3b': {
     id: 'ollama-llama3.2-3b',
     label: 'Ollama Llama 3.2 3B (Ubuntu 24.04 Local)',
     provider: 'Local Open-Source (Self-Hosted Docker)',
+    apiModelId: 'llama3.2:3b',
     inputCostPerMillionUsd: 0,
     outputCostPerMillionUsd: 0,
     avgLatencyMs: 290,
@@ -28,17 +36,19 @@ export const MODEL_TIERS: Record<ModelTierId, ModelTierSpec> = {
     id: 'gemini-3.1-flash-lite',
     label: 'Gemini 3.1 Flash-Lite',
     provider: 'Google GenAI API',
-    inputCostPerMillionUsd: 0.075,
-    outputCostPerMillionUsd: 0.30,
+    apiModelId: 'gemini-3.1-flash-lite',
+    inputCostPerMillionUsd: 0.25,
+    outputCostPerMillionUsd: 1.50,
     avgLatencyMs: 220,
     recommendedFor: 'High-speed intent classification, ICP scoring & FAQ fallback',
   },
-  'gemini-3.8-flash': {
-    id: 'gemini-3.8-flash',
-    label: 'Gemini 3.8 Flash',
+  'gemini-3.5-flash': {
+    id: 'gemini-3.5-flash',
+    label: 'Gemini 3.5 Flash',
     provider: 'Google GenAI API',
-    inputCostPerMillionUsd: 0.15,
-    outputCostPerMillionUsd: 0.60,
+    apiModelId: 'gemini-3.5-flash',
+    inputCostPerMillionUsd: 0.50,
+    outputCostPerMillionUsd: 3.00,
     avgLatencyMs: 380,
     recommendedFor: 'Grounded multi-channel outbound copy, social posts & tool calling',
   },
@@ -46,12 +56,42 @@ export const MODEL_TIERS: Record<ModelTierId, ModelTierSpec> = {
     id: 'frontier-baseline',
     label: 'Unoptimized Frontier Model (Baseline)',
     provider: 'Legacy Heavy Tier',
+    apiModelId: 'frontier-baseline',
     inputCostPerMillionUsd: 3.00,
     outputCostPerMillionUsd: 15.00,
     avgLatencyMs: 1850,
     recommendedFor: 'Comparison baseline only (20x more expensive per token)',
   },
 };
+
+/** Model used for the realtime voice path on `/live`. */
+export const LIVE_API_MODEL_ID = 'gemini-3.1-flash-live-preview';
+
+/** Tiers a user can actually pick in the UI (`frontier-baseline` is comparison-only). */
+export const SELECTABLE_MODEL_TIERS: ModelTierId[] = [
+  'ollama-llama3.2-3b',
+  'gemini-3.1-flash-lite',
+  'gemini-3.5-flash',
+];
+
+/**
+ * Price label rendered in the dropdowns. Derived from MODEL_TIERS so a UI caption can
+ * never disagree with the number the cost engine bills.
+ */
+export function formatTierPriceLabel(tier: ModelTierId): string {
+  const spec = MODEL_TIERS[tier];
+  if (spec.inputCostPerMillionUsd === 0 && spec.outputCostPerMillionUsd === 0) {
+    return `${spec.label} ($0.00 · Local)`;
+  }
+  return `${spec.label} ($${spec.inputCostPerMillionUsd.toFixed(2)} in / $${spec.outputCostPerMillionUsd.toFixed(2)} out · 1M tok)`;
+}
+
+/**
+ * Which code path produced a piece of generated copy, so a deterministic template
+ * fallback is never displayed in the UI as if a model had written it.
+ */
+export type GenerationSource = 'gemini-llm' | 'ollama-local' | 'deterministic-fallback';
+
 
 export interface BoilerplateStripResult {
   rawCharCount: number;
@@ -216,6 +256,8 @@ export interface CostMetrics {
   modelUsed: ModelTierId;
   modelLabel: string;
   cacheHit: boolean;
+  /** Absent (or false) means no model was billed for this result. */
+  modelCalled?: boolean;
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
@@ -232,12 +274,15 @@ export function calculateRunCost(params: {
   outputTokens: number;
   rawUnstrippedInputTokens?: number;
   latencyMs?: number;
+  /** False when the deterministic template answered instead of a model — bills nothing. */
+  modelCalled?: boolean;
 }): CostMetrics {
   const spec = MODEL_TIERS[params.modelUsed] || MODEL_TIERS['gemini-3.1-flash-lite'];
   const frontier = MODEL_TIERS['frontier-baseline'];
 
-  const effectiveInput = params.cacheHit ? 0 : params.inputTokens;
-  const effectiveOutput = params.cacheHit ? 0 : params.outputTokens;
+  const modelCalled = params.modelCalled !== false;
+  const effectiveInput = params.cacheHit || !modelCalled ? 0 : params.inputTokens;
+  const effectiveOutput = params.cacheHit || !modelCalled ? 0 : params.outputTokens;
 
   const estimatedCostUsd =
     (effectiveInput / 1_000_000) * spec.inputCostPerMillionUsd +
@@ -256,6 +301,7 @@ export function calculateRunCost(params: {
     modelUsed: spec.id,
     modelLabel: spec.label,
     cacheHit: params.cacheHit,
+    modelCalled,
     inputTokens: effectiveInput,
     outputTokens: effectiveOutput,
     totalTokens: effectiveInput + effectiveOutput,
@@ -357,6 +403,27 @@ export function evaluateIcpFit(
   };
 }
 
+/**
+ * GrowPilot's own reviewed commercial constants. Layer 2 verifies numbers about the
+ * *prospect* against their page; these figures describe our offer, so they are legal in
+ * copy without appearing in the source. Kept deliberately short: the outbound templates
+ * avoid gratuitous digits ("a short walkthrough", not "a 10-minute walkthrough") so this
+ * list never has to grow to cover marketing filler.
+ */
+export const OFFER_FACT_NUMBERS: string[] = [
+  '0', // $0.00 cached FAQ replies
+  '0.00',
+  '24', // 24/7 availability
+  '7',
+  '24/7',
+  '3', // 3-paragraph email / sub-3-second reply
+  '30', // 30-minute discovery call
+  '48', // 48-hour Docker deploy
+  '100', // 100% grounded
+  '500', // $500/mo starter package
+  '25000', // 25,000 BDT/mo local price
+];
+
 export interface GroundednessLayerCheck {
   layer: number;
   name: string;
@@ -391,12 +458,28 @@ export function verifyGroundedness(params: {
     combinedGenerated.toLowerCase().includes(params.companyName.toLowerCase().split(' ')[0]);
 
   // Layer 2: Numerical & Metric Integrity (prevent fabricated numbers)
-  const allowedNumbers = new Set(['24', '7', '24/7', '30', '48', '100', '500', '3']);
-  const sourceNumbers = lowerSource.match(/\b\d+(?:\.\d+)?%?\b/g) || [];
-  sourceNumbers.forEach((n) => allowedNumbers.add(n));
+  // Two kinds of numbers legitimately appear in the copy: figures quoted from the
+  // prospect's own page, and GrowPilot's own reviewed offer constants (price, SLA,
+  // demo length). Anything else is an invention about the prospect and must block.
+  //
+  // Known limit, measured rather than assumed: this checks that every figure exists in the
+  // source, not that the source used it the same way. A model can lift "10 AM" and write
+  // "a 10-minute call". A word-window around each number was tried to catch that and was
+  // reverted after live testing: it blocked honest paraphrase ("$1,400/mo" vs "$1,400
+  // monthly on social ads") and matched on the prospect's own name instead of meaning.
+  // Mitigation lives upstream instead — temperature 0.2 and an extraction-only prompt that
+  // forbids re-purposing a source digit into a new claim.
+  const allowedNumbers = new Set(OFFER_FACT_NUMBERS);
+  const numericPattern = /\b\d[\d,]*(?:\.\d+)?%?\b/g;
+  const normalizeNumericToken = (raw: string) => raw.replace(/,/g, '');
 
-  const generatedNumbers = combinedGenerated.match(/\b\d+(?:\.\d+)?%?\b/g) || [];
-  const unverifiedNumbers = generatedNumbers.filter((n) => !allowedNumbers.has(n));
+  const sourceNumbers = lowerSource.match(numericPattern) || [];
+  sourceNumbers.forEach((n) => allowedNumbers.add(normalizeNumericToken(n)));
+
+  const generatedNumbers = combinedGenerated.match(numericPattern) || [];
+  const unverifiedNumbers = generatedNumbers.filter(
+    (n) => !allowedNumbers.has(normalizeNumericToken(n))
+  );
   const numericPassed = unverifiedNumbers.length === 0;
 
   // Layer 3: Source Fact Citation Overlap
@@ -448,7 +531,7 @@ export function verifyGroundedness(params: {
       passed: numericPassed,
       detail: numericPassed
         ? `0 fabricated numbers detected (${generatedNumbers.length} numeric tokens verified).`
-        : `Blocked unverified numeric claims: ${unverifiedNumbers.join(', ')}`,
+        : `Blocked unverified numeric claims: ${[...new Set(unverifiedNumbers)].join(', ')}`,
     },
     {
       layer: 3,
@@ -571,5 +654,100 @@ export function formatGtmLeadsCsv(rows: GtmCsvExportRow[]): string {
   );
 
   return [headers.join(','), ...lines].join('\n');
+}
+
+const DHAKA_UTC_OFFSET_MINUTES = 360;
+const MONTH_ABBREVIATIONS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+const DAY_ABBREVIATIONS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * Returns the next free 30-minute discovery slot on a weekday, relative to `now`.
+ * Replaces the previous hardcoded "Mon 21 Oct" string that every booking reused.
+ */
+export function nextAvailableSlot(
+  now: Date,
+  takenSlotCount: number,
+  businessHourStart = 10,
+  businessHourEnd = 19
+): { label: string; startsAt: Date } {
+  const local = new Date(now.getTime() + DHAKA_UTC_OFFSET_MINUTES * 60_000);
+  const cursor = new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()));
+
+  const slotIndex = Math.max(0, takenSlotCount);
+  const slotsPerDay = Math.max(1, (businessHourEnd - businessHourStart) * 2);
+
+  let remaining = slotIndex % slotsPerDay;
+  let dayGuard = 0;
+
+  while (dayGuard < 400) {
+    const day = cursor.getUTCDay();
+    const isWeekday = day !== 0 && day !== 6;
+    if (isWeekday) {
+      const hoursIntoDay = Math.floor(remaining / 2);
+      const minutes = remaining % 2 === 0 ? 0 : 30;
+      const hour = businessHourStart + hoursIntoDay;
+      if (hour < businessHourEnd) break;
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    remaining = 0;
+    dayGuard += 1;
+  }
+
+  const hour = businessHourStart + Math.floor(remaining / 2);
+  const minute = remaining % 2 === 0 ? 0 : 30;
+  let startsAt = new Date(
+    Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth(), cursor.getUTCDate(), hour, minute) -
+      DHAKA_UTC_OFFSET_MINUTES * 60_000
+  );
+
+  // Never hand back a slot that has already passed (e.g. a 22:00 enquiry).
+  if (startsAt.getTime() <= now.getTime()) {
+    return nextAvailableSlot(new Date(now.getTime() + 24 * 60 * 60 * 1000), takenSlotCount);
+  }
+
+  const displayHour = hour % 12 === 0 ? 12 : hour % 12;
+  const amPm = hour < 12 ? 'AM' : 'PM';
+  const label =
+    `${DAY_ABBREVIATIONS[cursor.getUTCDay()]} ${cursor.getUTCDate()} ` +
+    `${MONTH_ABBREVIATIONS[cursor.getUTCMonth()]}, ${displayHour}:${String(minute).padStart(2, '0')} ${amPm} BDT` +
+    ' (30-min Discovery Call)';
+
+  return { label, startsAt };
+}
+
+/**
+ * Pure IPv4/IPv6 classifier used by the URL fetch guard. Returns true for any address that
+ * must never be reached on behalf of a user-supplied URL (cloud metadata, RFC1918,
+ * loopback, link-local, carrier-grade NAT, and IPv6 unique-local).
+ */
+export function isPrivateOrLoopbackIp(ip: string): boolean {
+  const value = ip.trim().replace(/^\[|\]$/g, '').toLowerCase();
+
+  if (value.includes(':')) {
+    if (value === '::1' || value === '::') return true;
+    if (/^f[cd][0-9a-f]{2}:/.test(value)) return true; // fc00::/7 unique local
+    if (/^fe[89ab][0-9a-f]:/.test(value)) return true; // fe80::/10 link-local
+    if (/^ff/.test(value)) return true; // multicast
+    if (/^::ffff:/.test(value)) return isPrivateOrLoopbackIp(value.replace('::ffff:', ''));
+    return false;
+  }
+
+  const octets = value.split('.').map((part) => Number(part));
+  if (octets.length !== 4 || octets.some((o) => !Number.isInteger(o) || o < 0 || o > 255)) {
+    return true; // unparseable -> treat as unsafe
+  }
+
+  const [a, b] = octets;
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 169 && b === 254) return true; // link-local + GCP metadata
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 198 && (b === 18 || b === 19)) return true; // benchmark range
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64.0.0/10
+  if (a >= 224) return true; // multicast + reserved
+  return false;
 }
 

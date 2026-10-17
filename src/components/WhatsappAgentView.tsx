@@ -1,6 +1,13 @@
 import React, { useState } from 'react';
-import { type CrmBookingRecord } from '../data/seedData';
-import { type FaqItem, type ModelTierId, type CostMetrics } from '../utils/agentEngine';
+import { type CrmBookingRecord, type AutomationDeliveryStatus } from '../data/seedData';
+import {
+  MODEL_TIERS,
+  SELECTABLE_MODEL_TIERS,
+  type FaqItem,
+  type ModelTierId,
+  type CostMetrics,
+  type GenerationSource,
+} from '../utils/agentEngine';
 import { LiveVoiceAgentPanel } from './LiveVoiceAgentPanel';
 import { Send, Plus, Zap, Calendar, ShieldAlert } from 'lucide-react';
 
@@ -16,6 +23,9 @@ export interface AgentTrace {
   slidingWindowTurns: number;
   droppedTurns: number;
   costMetrics: CostMetrics;
+  generationSource?: GenerationSource;
+  modelError?: string | null;
+  automationStatus?: AutomationDeliveryStatus;
 }
 
 interface ChatMessageItem {
@@ -236,19 +246,17 @@ export const WhatsappAgentView: React.FC<WhatsappAgentViewProps> = ({
               onChange={(e) => setModelPreference(e.target.value as ModelTierId)}
               className="px-3 py-2 text-xs font-medium bg-white border border-slate-300 rounded-lg"
             >
-              <option value="ollama-llama3.2-3b">
-                Model: Ollama Llama 3.2 3B ($0.00)
-              </option>
-              <option value="gemini-3.1-flash-lite">
-                Model: Gemini 3.1 Flash-Lite
-              </option>
-              <option value="gemini-3.8-flash">Model: Gemini 3.8 Flash</option>
+              {SELECTABLE_MODEL_TIERS.map((tierId) => (
+                <option key={tierId} value={tierId}>
+                  Model: {MODEL_TIERS[tierId].label}
+                </option>
+              ))}
             </select>
           </div>
         </div>
       </div>
 
-      {/* Collapsible Real-Time Voice Qualification & Booking Call (gemini-3.8-live) */}
+      {/* Collapsible Real-Time Voice Qualification & Booking Call */}
       {showVoicePanel && <LiveVoiceAgentPanel onNewVoiceBooking={onNewVoiceBooking} />}
 
       {/* 2-Column Split: Left = WhatsApp/Web Chat Simulator, Right = Live Prompt & Token Cost Inspector */}
@@ -416,6 +424,52 @@ export const WhatsappAgentView: React.FC<WhatsappAgentViewProps> = ({
                   2
                 )}
               </pre>
+              <div className="mt-2 space-y-1.5 text-[11px]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-slate-500">Replied by</span>
+                  <span
+                    className={`font-mono font-semibold ${
+                      latestTrace.generationSource === 'deterministic-fallback' ||
+                      !latestTrace.generationSource
+                        ? 'text-amber-700'
+                        : 'text-teal-800'
+                    }`}
+                  >
+                    {latestTrace.generationSource === 'gemini-llm'
+                      ? 'Gemini LLM'
+                      : latestTrace.generationSource === 'ollama-local'
+                        ? 'Local Ollama'
+                        : latestTrace.costMetrics.cacheHit
+                          ? 'Layer 0 Cache (0 tokens)'
+                          : 'Deterministic template'}
+                  </span>
+                </div>
+                {latestTrace.modelError ? (
+                  <div className="rounded-md bg-amber-50 border border-amber-200 px-2 py-1.5 text-amber-800 leading-snug">
+                    Model not used: {latestTrace.modelError}
+                  </div>
+                ) : null}
+                {latestTrace.automationStatus ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-slate-500">n8n automation</span>
+                    <span
+                      className={`font-mono font-semibold ${
+                        latestTrace.automationStatus === 'delivered'
+                          ? 'text-emerald-700'
+                          : latestTrace.automationStatus === 'failed'
+                            ? 'text-rose-700'
+                            : 'text-slate-500'
+                      }`}
+                    >
+                      {latestTrace.automationStatus === 'delivered'
+                        ? 'LEAD PUSHED TO WEBHOOK'
+                        : latestTrace.automationStatus === 'failed'
+                          ? 'WEBHOOK DELIVERY FAILED'
+                          : 'N8N_WEBHOOK_URL NOT CONFIGURED'}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
             </div>
 
             {/* Cost-Control Guardrails Summary */}

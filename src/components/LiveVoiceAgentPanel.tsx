@@ -53,7 +53,7 @@ export const LiveVoiceAgentPanel: React.FC<LiveVoiceAgentPanelProps> = ({
     {
       id: 'init-voice-note',
       role: 'system',
-      text: 'Ready for real-time voice conversation via gemini-3.8-live (16kHz PCM mic input · 24kHz gapless audio output · live CRM tool calling).',
+      text: 'Ready for real-time voice conversation via gemini-3.1-flash-live-preview (16kHz PCM mic input · 24kHz gapless audio output · live CRM tool calling).',
       timestamp: 'Ready',
     },
   ]);
@@ -223,7 +223,7 @@ export const LiveVoiceAgentPanel: React.FC<LiveVoiceAgentPanelProps> = ({
         } catch {
           appendTranscript(
             'system',
-            'Microphone access unavailable or declined — Connected in Live Voice + Quick Prompt mode (you can still hear real-time 24kHz voice responses from gemini-3.8-live using the prompt buttons below).'
+            'Microphone access unavailable or declined — Connected in Live Voice + Quick Prompt mode (you can still hear real-time 24kHz voice responses from gemini-3.1-flash-live-preview using the prompt buttons below).'
           );
         }
       };
@@ -273,7 +273,7 @@ export const LiveVoiceAgentPanel: React.FC<LiveVoiceAgentPanelProps> = ({
       };
     } catch (err: unknown) {
       setErrorMessage(
-        err instanceof Error ? err.message : 'Could not start Gemini 3.8 Live voice session.'
+        err instanceof Error ? err.message : 'Could not start Gemini Live voice session.'
       );
       setCallState('error');
     }
@@ -299,13 +299,13 @@ export const LiveVoiceAgentPanel: React.FC<LiveVoiceAgentPanelProps> = ({
 
   return (
     <section
-      aria-label="Gemini 3.8 Live Real-Time Voice Qualification Agent"
+      aria-label="Gemini Live Real-Time Voice Qualification Agent"
       className="bg-white border border-slate-200 rounded-xl p-5 space-y-4"
     >
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
           <div className="flex items-center gap-2 text-xs text-slate-500">
-            <span className="font-mono font-semibold text-teal-800">gemini-3.8-live</span>
+            <span className="font-mono font-semibold text-teal-800">gemini-3.1-flash-live-preview</span>
             <span aria-hidden="true">·</span>
             <span>16kHz PCM Mic Input → 24kHz Gapless Audio Output</span>
             <span aria-hidden="true">·</span>

@@ -2,6 +2,7 @@ import {
   type FaqItem,
   type GroundednessReport,
   type CostMetrics,
+  type GenerationSource,
 } from '../utils/agentEngine';
 
 export interface GtmProspectPreset {
@@ -40,7 +41,12 @@ export interface GtmPipelineRecord {
   };
   groundednessReport: GroundednessReport;
   costMetrics: CostMetrics;
+  /** Which code path actually wrote the copy — never report a template as model output. */
+  generationSource?: GenerationSource;
+  modelError?: string | null;
 }
+
+export type AutomationDeliveryStatus = 'delivered' | 'failed' | 'not_configured';
 
 export interface CrmBookingRecord {
   id: string;
@@ -56,6 +62,8 @@ export interface CrmBookingRecord {
   costUsd: number;
   createdAt?: string;
   timestamp?: string;
+  /** Whether the downstream n8n automation actually received this lead. */
+  automationStatus?: AutomationDeliveryStatus;
 }
 
 export const PRESET_PROSPECTS: GtmProspectPreset[] = [
@@ -252,8 +260,8 @@ export const INITIAL_GTM_RECORDS: GtmPipelineRecord[] = [
       ],
     },
     costMetrics: {
-      modelUsed: 'gemini-3.8-flash',
-      modelLabel: 'Gemini 3.8 Flash',
+      modelUsed: 'gemini-3.5-flash',
+      modelLabel: 'Gemini 3.5 Flash',
       cacheHit: false,
       inputTokens: 171,
       outputTokens: 265,

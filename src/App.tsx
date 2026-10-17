@@ -58,7 +58,6 @@ function buildClientSideGroundedAssets(params: {
   companyName: string;
   cleanedText: string;
   industry: string;
-  icpScore: number;
 }) {
     const sentences = params.cleanedText
     .split(/(?<=[.!?])\s+/)
@@ -80,10 +79,10 @@ function buildClientSideGroundedAssets(params: {
     summary,
     extractedFacts,
     coldEmailSubject: `Automating 24/7 lead capture & workflows for ${params.companyName}`,
-    coldEmailBody: `Hi ${params.companyName} team,\n\nI reviewed your operations in ${params.industry} — specifically noting: "${firstFact}".\n\nWe deploy cached 24/7 WhatsApp & web qualification agents connected to n8n and Google Sheets CRM so after-hours inquiries are answered and booked automatically in under 3 seconds.\n\nWould you be open to a 10-minute walkthrough this week?\n\nBest,\nGrowPilot Automation Team`,
-    whatsappOpener: `Hello ${params.companyName} team! Saw your ${params.industry} services ("${firstFact.slice(0, 85)}..."). We built a 24/7 WhatsApp + n8n booking agent that qualifies leads and logs to Google Sheets at near-zero token cost. Want a 60-sec live demo link?`,
-    followUpMessage: `Hi ${params.companyName} team — following up in case 24/7 WhatsApp and CRM lead automation is a priority this quarter. Happy to share a 60-second sandbox link.`,
-    socialMediaPost: `How GTM Engineering + Smallest-Model Routing cuts outbound AI costs by 90%:\n\nWhile analyzing ${params.companyName} (${params.industry}, ICP Score ${params.icpScore}/100), our GrowPilot pipeline stripped HTML boilerplate before inference, verified every claim through a 5-layer groundedness gate, and generated multi-channel outbound copy in one pass.`,
+    coldEmailBody: `Hi ${params.companyName} team,\n\nI reviewed your operations in ${params.industry} — specifically noting: "${firstFact}".\n\nWe deploy cached 24/7 WhatsApp & web qualification agents connected to n8n and Google Sheets CRM so after-hours inquiries are answered and booked automatically in under 3 seconds.\n\nWould you be open to a short live walkthrough this week?\n\nBest,\nGrowPilot Automation Team`,
+    whatsappOpener: `Hello ${params.companyName} team! Saw your ${params.industry} services ("${firstFact.slice(0, 85)}..."). We built a 24/7 WhatsApp + n8n booking agent that qualifies leads and logs to Google Sheets at near-zero token cost. Want a quick live demo link?`,
+    followUpMessage: `Hi ${params.companyName} team — following up in case 24/7 WhatsApp and CRM lead automation is a priority this quarter. Happy to share a sandbox link.`,
+    socialMediaPost: `How GTM Engineering plus Smallest-Model Routing cuts outbound AI cost to near zero:\n\nWhile analyzing ${params.companyName} (${params.industry}), our GrowPilot pipeline stripped HTML boilerplate before inference, verified every claim through a five-layer groundedness gate, and scored the prospect against our ICP gate before spending a single generation token.`,
   };
 }
 
@@ -92,13 +91,15 @@ export default function App() {
   const [faqs, setFaqs] = useState<FaqItem[]>(INITIAL_FAQS);
   const [gtmRecords, setGtmRecords] = useState<GtmPipelineRecord[]>(INITIAL_GTM_RECORDS);
   const [crmBookings, setCrmBookings] = useState<CrmBookingRecord[]>(INITIAL_CRM_BOOKINGS);
+  // Zeroed until a real run happens: pre-seeding this with invented history made the
+  // dashboard report savings that had never occurred.
   const [telemetry, setTelemetry] = useState<TelemetrySummary>({
-    totalRequests: 14,
-    cacheHits: 6,
-    cacheHitRatePct: 42.9,
-    totalTokensUsed: 971,
-    totalCostUsd: 0.0002427,
-    totalSavedUsd: 0.04182,
+    totalRequests: 0,
+    cacheHits: 0,
+    cacheHitRatePct: 0,
+    totalTokensUsed: 0,
+    totalCostUsd: 0,
+    totalSavedUsd: 0,
   });
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [clientGtmCache, setClientGtmCache] = useState<Record<string, GtmPipelineRecord>>(() => {
@@ -190,6 +191,7 @@ export default function App() {
         inputTokens: Math.min(80, stripped.cleanedEstimatedTokens),
         outputTokens: 18,
         rawUnstrippedInputTokens: stripped.rawEstimatedTokens,
+        modelCalled: false,
       });
       const skippedRecord: GtmPipelineRecord = {
         id: `gtm-skip-${Date.now()}`,
@@ -205,6 +207,7 @@ export default function App() {
         icpScore: icpEval.icpScore,
         icpThreshold: payload.icpThreshold,
         qualificationStatus: 'SKIPPED_LOW_ICP',
+        generationSource: 'deterministic-fallback',
         icpReasoning: icpEval.reasoning,
         matchedSignals: icpEval.matchedSignals,
         summary: `Skipped outbound copy generation: ICP score (${icpEval.icpScore}/100) is below the configured ${payload.icpThreshold}/100 token-saving gate.`,
@@ -236,7 +239,6 @@ export default function App() {
       companyName: payload.companyName,
       cleanedText: stripped.cleanedText,
       industry: payload.industry || 'B2B & Automation',
-      icpScore: icpEval.icpScore,
     });
     const groundednessReport = verifyGroundedness({
       sourceText: stripped.cleanedText,
@@ -257,6 +259,7 @@ export default function App() {
       inputTokens: stripped.cleanedEstimatedTokens,
       outputTokens: outTokens,
       rawUnstrippedInputTokens: stripped.rawEstimatedTokens,
+      modelCalled: false,
     });
 
     const record: GtmPipelineRecord = {
@@ -414,6 +417,7 @@ export default function App() {
           leadScore: 'COLD_FAQ',
           budgetUsd: 0,
           nextAction: 'SERVED_ZERO_TOKENS',
+          generationSource: 'deterministic-fallback',
           bookedSlot: null,
           slidingWindowTurns: finalTurns.trimmed.length,
           droppedTurns: finalTurns.droppedCount,
@@ -510,6 +514,9 @@ export default function App() {
         slidingWindowTurns: finalTurns.trimmed.length,
         droppedTurns: finalTurns.droppedCount,
         costMetrics,
+        generationSource: 'deterministic-fallback',
+        modelError: 'Static deployment: no server or API key available, so the deterministic qualification template replied.',
+        automationStatus: 'not_configured',
       },
     };
   };

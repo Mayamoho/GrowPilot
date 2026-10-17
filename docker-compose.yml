@@ -13,7 +13,15 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
-      - N8N_WEBHOOK_URL=http://n8n:5678/webhook/growpilot-lead
+      - GEMINI_MODEL_FLASH=${GEMINI_MODEL_FLASH:-gemini-3.5-flash}
+      - GEMINI_MODEL_FLASH_LITE=${GEMINI_MODEL_FLASH_LITE:-gemini-3.1-flash-lite}
+      - GEMINI_MODEL_LIVE=${GEMINI_MODEL_LIVE:-gemini-3.1-flash-live-preview}
+      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL:-http://n8n:5678/webhook/growpilot-lead}
+      - N8N_USER=${N8N_USER:-}
+      - N8N_PASSWORD=${N8N_PASSWORD:-}
+      - GROWPILOT_STATE_FILE=/data/growpilot-state.json
+    volumes:
+      - growpilot_data:/data
     depends_on:
       - ollama
       - n8n
@@ -51,6 +59,7 @@ services:
 volumes:
   ollama_data:
   n8n_data:
+  growpilot_data:
 
 networks:
   growpilot-net:

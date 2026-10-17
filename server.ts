@@ -4,6 +4,9 @@ import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
+import fs from 'fs';
+import dns from 'node:dns/promises';
+import net from 'node:net';
 import { fileURLToPath } from 'url';
 import {
   GoogleGenAI,
@@ -20,6 +23,11 @@ import {
   evaluateIcpFit,
   verifyGroundedness,
   trimConversationWindow,
+  nextAvailableSlot,
+  isPrivateOrLoopbackIp,
+  MODEL_TIERS,
+  LIVE_API_MODEL_ID,
+  type GenerationSource,
   type ModelTierId,
   type FaqItem,
   type ChatTurn,
@@ -30,10 +38,37 @@ import {
   INITIAL_CRM_BOOKINGS,
   type GtmPipelineRecord,
   type CrmBookingRecord,
+  type AutomationDeliveryStatus,
 } from './src/data/seedData.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+/**
+ * Model IDs and prices are deployment data, not source constants: Google ships new
+ * preview IDs regularly. Env overrides win so a stale ID is a one-line fix, not a redeploy.
+ */
+function resolveApiModelId(tier: ModelTierId): string {
+  const overrides: Partial<Record<ModelTierId, string | undefined>> = {
+    'ollama-llama3.2-3b': process.env.OLLAMA_MODEL?.trim(),
+    'gemini-3.1-flash-lite': process.env.GEMINI_MODEL_FLASH_LITE?.trim(),
+    'gemini-3.5-flash': process.env.GEMINI_MODEL_FLASH?.trim(),
+  };
+  return overrides[tier] || MODEL_TIERS[tier].apiModelId;
+}
+
+const LIVE_MODEL_ID = process.env.GEMINI_MODEL_LIVE?.trim() || LIVE_API_MODEL_ID;
+const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(
+  /\/+$/,
+  ''
+);
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL?.trim() || '';
+const GEMINI_MAX_ATTEMPTS = Math.max(1, Number(process.env.GEMINI_MAX_ATTEMPTS || 4));
+// Unset keeps the quota degrade on. An explicit empty value (or 0/false) makes a quota-blocked
+// tier report the error instead of silently re-billing a cheaper model.
+const rawQuotaFallback = process.env.GEMINI_QUOTA_FALLBACK;
+const GEMINI_QUOTA_FALLBACK_ENABLED =
+  rawQuotaFallback === undefined ? true : !/^(?:0|false|)$/i.test(rawQuotaFallback.trim());
 
 function getGenAIClient(): GoogleGenAI | null {
   const key = process.env.GEMINI_API_KEY;
@@ -50,27 +85,90 @@ function getGenAIClient(): GoogleGenAI | null {
   });
 }
 
-// Server-side in-memory stores & Layer 0 Caches
+
+// Server-side stores & Layer 0 Caches.
+// Persisted to disk: a captured lead that disappears on restart is a lost sale, and the
+// dashboard advertises a CRM log, so the store has to outlive the process.
+const STATE_FILE = process.env.GROWPILOT_STATE_FILE
+  ? path.resolve(process.env.GROWPILOT_STATE_FILE)
+  : path.join(__dirname, '.data', 'growpilot-state.json');
+
 let faqsStore: FaqItem[] = [...INITIAL_FAQS];
 let gtmRecordsStore: GtmPipelineRecord[] = [...INITIAL_GTM_RECORDS];
 let crmBookingsStore: CrmBookingRecord[] = [...INITIAL_CRM_BOOKINGS];
 const gtmCache = new Map<string, GtmPipelineRecord>();
-const responseFaqCache = new Map<string, { reply: string; category: string; faqId: string }>();
 const sessionHistoryStore = new Map<string, ChatTurn[]>();
 
-// Seed Layer 0 GTM cache with initial seed record
-for (const rec of INITIAL_GTM_RECORDS) {
-  const key = normalizeCacheKey(`${rec.companyName}_${rec.sourceUrl}_${rec.icpThreshold}`);
-  gtmCache.set(key, rec);
+let telemetryLedger = {
+  totalRequests: 0,
+  cacheHits: 0,
+  totalTokensUsed: 0,
+  totalCostUsd: 0,
+  totalSavedUsd: 0,
+};
+
+function loadPersistedState(): void {
+  try {
+    if (!fs.existsSync(STATE_FILE)) return;
+    const parsed = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) as {
+      faqs?: FaqItem[];
+      gtmRecords?: GtmPipelineRecord[];
+      crmBookings?: CrmBookingRecord[];
+      telemetry?: Partial<typeof telemetryLedger>;
+    };
+    if (Array.isArray(parsed.faqs) && parsed.faqs.length > 0) faqsStore = parsed.faqs;
+    if (Array.isArray(parsed.gtmRecords) && parsed.gtmRecords.length > 0) {
+      gtmRecordsStore = parsed.gtmRecords;
+    }
+    if (Array.isArray(parsed.crmBookings)) crmBookingsStore = parsed.crmBookings;
+    if (parsed.telemetry) telemetryLedger = { ...telemetryLedger, ...parsed.telemetry };
+
+    for (const rec of gtmRecordsStore) {
+      if (rec.qualificationStatus === 'QUALIFIED_OUTBOUND' || rec.qualificationStatus === 'SKIPPED_LOW_ICP') {
+        const key = normalizeCacheKey(`${rec.companyName}_${rec.sourceUrl}_${rec.icpThreshold}`);
+        gtmCache.set(key, rec);
+      }
+    }
+    console.log(`[state] restored ${gtmRecordsStore.length} GTM records and ${crmBookingsStore.length} CRM bookings from ${STATE_FILE}`);
+  } catch (err) {
+    console.warn('[state] could not restore persisted state, starting fresh:', err);
+  }
 }
 
-let telemetryLedger = {
-  totalRequests: 14,
-  cacheHits: 6,
-  totalTokensUsed: 971,
-  totalCostUsd: 0.0002427,
-  totalSavedUsd: 0.04182,
-};
+let persistTimer: NodeJS.Timeout | null = null;
+function persistState(): void {
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    try {
+      fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
+      fs.writeFileSync(
+        STATE_FILE,
+        JSON.stringify(
+          {
+            faqs: faqsStore,
+            gtmRecords: gtmRecordsStore.slice(0, 200),
+            crmBookings: crmBookingsStore.slice(0, 200),
+            telemetry: telemetryLedger,
+          },
+          null,
+          2
+        )
+      );
+    } catch (err) {
+      console.warn('[state] persist failed:', err);
+    }
+  }, 250);
+  persistTimer.unref?.();
+}
+
+loadPersistedState();
+
+// Seed Layer 0 GTM cache with initial seed records not already restored.
+for (const rec of INITIAL_GTM_RECORDS) {
+  const key = normalizeCacheKey(`${rec.companyName}_${rec.sourceUrl}_${rec.icpThreshold}`);
+  if (!gtmCache.has(key)) gtmCache.set(key, rec);
+}
+
 
 const bookDiscoveryCallDeclaration: FunctionDeclaration = {
   name: 'book_discovery_call',
@@ -133,16 +231,289 @@ function buildDeterministicGroundedAssets(params: {
     summary,
     extractedFacts,
     coldEmailSubject: `Automating 24/7 lead qualification & workflows for ${params.companyName}`,
-    coldEmailBody: `Hi ${params.companyName} team,\n\nI was reviewing your operations (${primaryHook}) and noticed a strong opportunity to streamline customer response and lead capture.\n\nWe build 24/7 AI agents connected via n8n to WhatsApp, Google Sheets, and Google Calendar—using a Layer 0 FAQ cache so recurring inquiries cost $0.00 in tokens and book qualified leads automatically.\n\nWould you be open to a 10-minute walkthrough of a live agent configured for ${params.companyName}?`,
+    coldEmailBody: `Hi ${params.companyName} team,\n\nI was reviewing your operations (${primaryHook}) and noticed a strong opportunity to streamline customer response and lead capture.\n\nWe build 24/7 AI agents connected via n8n to WhatsApp, Google Sheets, and Google Calendar—using a Layer 0 FAQ cache so recurring inquiries cost $0.00 in tokens and book qualified leads automatically.\n\nWould you be open to a short live walkthrough of an agent configured for ${params.companyName}?`,
     whatsappOpener: `Assalamu Alaikum ${params.companyName} team! Noticed your work in ${params.industry} (${primaryHook.slice(0, 95)}). We built a 24/7 WhatsApp + n8n AI agent that answers FAQs for $0.00 in cached tokens and books qualified leads straight into Google Sheets. Can I share a quick test link?`,
     followUpMessage: `Quick follow-up for ${params.companyName} — I prepared a zero-cost cached FAQ & booking workflow tailored to your ${params.industry} services. Let me know if you'd like to test it live!`,
-    socialMediaPost: `How ${params.companyName} (${params.industry}) can turn inbound traffic into booked appointments 24/7 without wasting LLM tokens:\n\n• Strip HTML boilerplate (-78% input tokens)\n• Answer top FAQs from Layer 0 cache (0 tokens, <5ms)\n• Route high-intent leads via n8n to Google Calendar & CRM with a 5-layer groundedness check.`,
+    socialMediaPost: `How ${params.companyName} (${params.industry}) can turn inbound traffic into booked appointments 24/7 without wasting LLM tokens:\n\n• Strip HTML boilerplate before the model ever sees it\n• Answer top FAQs from the Layer 0 cache at 0 tokens\n• Route high-intent leads via n8n to Google Calendar & CRM with a five-layer groundedness check.`,
   };
+}
+
+interface WebhookDelivery {
+  configured: boolean;
+  delivered: boolean;
+  statusCode?: number;
+  error?: string;
+  attemptedAt: string;
+}
+
+const webhookLedger: { last: WebhookDelivery | null; delivered: number; failed: number } = {
+  last: null,
+  delivered: 0,
+  failed: 0,
+};
+
+/**
+ * Pushes a normalized lead/booking event to the self-hosted n8n webhook configured by
+ * N8N_WEBHOOK_URL. Never throws: an unreachable automation must not fail the chat turn
+ * the customer is waiting on, but the outcome is surfaced so the UI can be truthful.
+ */
+async function dispatchToN8n(
+  event: string,
+  payload: Record<string, unknown>
+): Promise<WebhookDelivery> {
+  const attemptedAt = new Date().toISOString();
+  if (!N8N_WEBHOOK_URL) {
+    return { configured: false, delivered: false, error: 'N8N_WEBHOOK_URL not set', attemptedAt };
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6000);
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const user = process.env.N8N_USER?.trim();
+    const password = process.env.N8N_PASSWORD?.trim();
+    if (user && password) {
+      headers.Authorization = `Basic ${Buffer.from(`${user}:${password}`).toString('base64')}`;
+    }
+
+    const res = await fetch(N8N_WEBHOOK_URL, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ event, source: 'growpilot', timestamp: attemptedAt, ...payload }),
+      signal: controller.signal,
+    });
+
+    const delivery: WebhookDelivery = {
+      configured: true,
+      delivered: res.ok,
+      statusCode: res.status,
+      error: res.ok ? undefined : `n8n responded ${res.status}`,
+      attemptedAt,
+    };
+    webhookLedger.last = delivery;
+    if (delivery.delivered) webhookLedger.delivered += 1;
+    else webhookLedger.failed += 1;
+    if (!delivery.delivered) console.warn('[n8n] webhook delivery failed:', delivery.error);
+    return delivery;
+  } catch (err) {
+    const delivery: WebhookDelivery = {
+      configured: true,
+      delivered: false,
+      error: err instanceof Error ? err.message : String(err),
+      attemptedAt,
+    };
+    webhookLedger.last = delivery;
+    webhookLedger.failed += 1;
+    console.warn('[n8n] webhook unreachable:', delivery.error);
+    return delivery;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Shared shape every downstream n8n flow can rely on. */
+function buildLeadWebhookPayload(fields: {
+  event: string;
+  leadName: string;
+  businessType: string;
+  channel: string;
+  needSummary: string;
+  monthlyBudgetUsd: number;
+  leadScore: string;
+  bookedSlot: string | null;
+  intent: string;
+  tokensUsed: number;
+  costUsd: number;
+}): Record<string, unknown> {
+  return {
+    event: fields.event,
+    lead_name: fields.leadName,
+    business_type: fields.businessType,
+    channel: fields.channel,
+    need_summary: fields.needSummary,
+    extracted_budget_usd: fields.monthlyBudgetUsd,
+    lead_score: fields.leadScore,
+    intent: fields.intent,
+    booked_slot: fields.bookedSlot,
+    tokens_used: fields.tokensUsed,
+    cost_usd: fields.costUsd,
+  };
+}
+
+const MAX_FETCH_BYTES = 400_000;
+const MAX_REDIRECT_HOPS = 4;
+
+/**
+ * Fetches a prospect page for the GTM scraper without letting a user-supplied URL reach
+ * internal infrastructure. Without the IP check, `http://169.254.169.254/` or
+ * `http://n8n:5678/` would be proxied straight back to the caller through this endpoint.
+ */
+async function fetchProspectPageSafely(targetUrl: string): Promise<string> {
+  let current = targetUrl;
+
+  for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop += 1) {
+    let parsed: URL;
+    try {
+      parsed = new URL(current);
+    } catch {
+      throw new Error('Malformed URL');
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error(`Unsupported protocol: ${parsed.protocol}`);
+    }
+
+    const host = parsed.hostname;
+    if (!host) throw new Error('URL has no hostname');
+
+    if (net.isIP(host) && isPrivateOrLoopbackIp(host)) {
+      throw new Error('Refusing to fetch a private or link-local address');
+    }
+
+    const resolved = await dns.lookup(host, { all: true, verbatim: true });
+    if (resolved.some((entry) => isPrivateOrLoopbackIp(entry.address))) {
+      throw new Error(`Hostname "${host}" resolves to a private or internal address`);
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    let res: Response;
+    try {
+      res = await fetch(current, {
+        redirect: 'manual',
+        signal: controller.signal,
+        headers: { 'User-Agent': 'GrowPilot-GTM-Bot/1.0 (+https://abukawser.xyz)' },
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get('location');
+      if (!location) throw new Error(`Redirect ${res.status} without a Location header`);
+      current = new URL(location, current).toString();
+      continue;
+    }
+
+    if (!res.ok) throw new Error(`Upstream responded ${res.status}`);
+
+    const declaredLength = Number(res.headers.get('content-length') || 0);
+    if (declaredLength > MAX_FETCH_BYTES) throw new Error('Page too large to analyze');
+
+    const chunks: Buffer[] = [];
+    let received = 0;
+    if (res.body) {
+      for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+        received += chunk.byteLength;
+        chunks.push(Buffer.from(chunk));
+        if (received > MAX_FETCH_BYTES) break;
+      }
+    }
+    return Buffer.concat(chunks).toString('utf8').slice(0, MAX_FETCH_BYTES);
+  }
+
+  throw new Error('Too many redirects');
+}
+
+/**
+ * Gemini returns throttling 503 ("This model is currently experiencing high demand... try
+ * again with exponential backoff") and 429 quota errors. Backoff clears the 503 blips; a quota
+ * 429 ("check your plan and billing") is permanent for that model and is what a free-tier key
+ * hits on the bigger tier first. That is this project's own thesis in practice, so the helper
+ * degrades to the smallest model that answers instead of degrading to a template — and returns
+ * which model actually replied so billing and the UI label follow the truth.
+ */
+type GeminiResult = { text: string | null; model: string; degraded: boolean };
+
+async function generateWithGemini(
+  ai: GoogleGenAI,
+  request: { model: string; contents: string; config: Record<string, unknown> },
+  logTag: string,
+  options: { maxAttempts?: number; fallbackModel?: string } = {}
+): Promise<GeminiResult> {
+  const maxAttempts = options.maxAttempts ?? GEMINI_MAX_ATTEMPTS;
+  const fallbackModel = GEMINI_QUOTA_FALLBACK_ENABLED ? options.fallbackModel : undefined;
+
+  const attempt = async (model: string): Promise<GeminiResult> => {
+    for (let tryNo = 1; ; tryNo++) {
+      try {
+        const res = await ai.models.generateContent({
+          ...request,
+          model,
+        } as Parameters<GoogleGenAI['models']['generateContent']>[0]);
+        return { text: res.text ?? null, model, degraded: model !== request.model };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const quota = /exceeded your current quota|billing/i.test(message);
+        const transient =
+          !quota &&
+          /"(?:code|status)"\s*:\s*"?(429|500|503)|high demand|rate limit|unavailable|timed? ?out/i.test(
+            message
+          );
+        if (tryNo < maxAttempts && transient) {
+          const backoffMs = Math.min(12_000, 800 * 2 ** (tryNo - 1));
+          console.warn(
+            `[${logTag}] transient Gemini error on ${model} (attempt ${tryNo}/${maxAttempts}): ${message.slice(0, 120)} — retrying in ${backoffMs}ms`
+          );
+          await new Promise((resolve) => setTimeout(resolve, backoffMs + Math.floor(Math.random() * 250)));
+          continue;
+        }
+        if (quota && fallbackModel && fallbackModel !== model) {
+          console.warn(`[${logTag}] ${model} is out of quota for this key — falling back to ${fallbackModel}`);
+          return attempt(fallbackModel);
+        }
+        throw err instanceof Error ? err : new Error(message);
+      }
+    }
+  };
+
+  return attempt(request.model);
+}
+
+/**
+ * Calls the local Ollama container. Previously the "Ollama $0.00" tier only *skipped* the
+ * Gemini branch and silently returned a template, so no local inference ever ran.
+ */
+async function generateWithOllama(
+  systemInstruction: string,
+  userContent: string,
+  options: { json: boolean; model?: string }
+): Promise<string | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25000);
+  try {
+    const res = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: options.model || resolveApiModelId('ollama-llama3.2-3b'),
+        stream: false,
+        ...(options.json ? { format: 'json' } : {}),
+        options: { temperature: 0.2 },
+        messages: [
+          { role: 'system', content: systemInstruction },
+          { role: 'user', content: userContent },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      console.warn(`[ollama] /api/chat responded ${res.status}`);
+      return null;
+    }
+    const data = (await res.json()) as { message?: { content?: string } };
+    const text = data.message?.content?.trim();
+    return text || null;
+  } catch (err) {
+    console.warn('[ollama] local inference unavailable:', err instanceof Error ? err.message : err);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT || 3000);
   const httpServer = http.createServer(app);
 
   app.use(express.json({ limit: '2mb' }));
@@ -153,6 +524,17 @@ async function startServer() {
       faqs: faqsStore,
       gtmRecords: gtmRecordsStore,
       crmBookings: crmBookingsStore,
+      automation: {
+        n8nConfigured: Boolean(N8N_WEBHOOK_URL),
+        delivered: webhookLedger.delivered,
+        failed: webhookLedger.failed,
+        last: webhookLedger.last,
+      },
+      engine: {
+        geminiConfigured: Boolean(getGenAIClient()),
+        ollamaBaseUrl: OLLAMA_BASE_URL,
+        liveModel: LIVE_MODEL_ID,
+      },
       telemetry: {
         ...telemetryLedger,
         cacheHitRatePct:
@@ -167,10 +549,9 @@ async function startServer() {
   // 2. Clear Layer 0 Cache (for testing Cold Run vs Cache Hit)
   app.post('/api/cache/clear', (_req, res) => {
     gtmCache.clear();
-    responseFaqCache.clear();
     res.json({
       cleared: true,
-      message: 'Layer 0 GTM and FAQ caches cleared. Next identical request will run a fresh model pass.',
+      message: 'Layer 0 GTM cache cleared. Next identical request will run a fresh model pass.',
     });
   });
 
@@ -198,6 +579,7 @@ async function startServer() {
     };
 
     faqsStore = [newFaq, ...faqsStore];
+    persistState();
     res.json({ faq: newFaq, faqs: faqsStore });
   });
 
@@ -210,7 +592,7 @@ async function startServer() {
       industry = 'B2B Services & Automation',
       rawContent = '',
       icpThreshold = 60,
-      modelPreference = 'gemini-3.8-flash',
+      modelPreference = 'gemini-3.5-flash',
       bypassCache = false,
     } = req.body || {};
 
@@ -222,9 +604,9 @@ async function startServer() {
     const selectedTier: ModelTierId =
       modelPreference === 'ollama-llama3.2-3b' ||
       modelPreference === 'gemini-3.1-flash-lite' ||
-      modelPreference === 'gemini-3.8-flash'
+      modelPreference === 'gemini-3.5-flash'
         ? modelPreference
-        : 'gemini-3.8-flash';
+        : 'gemini-3.5-flash';
 
     const cacheKey = normalizeCacheKey(
       `${companyName}_${sourceUrl}_${rawContent.slice(0, 160)}_${icpThreshold}`
@@ -259,6 +641,7 @@ async function startServer() {
         updatedCachedRecord,
         ...gtmRecordsStore.filter((r) => r.companyName !== updatedCachedRecord.companyName),
       ];
+      persistState();
 
       res.json({
         record: updatedCachedRecord,
@@ -269,19 +652,13 @@ async function startServer() {
 
     // Step 1: Fetch live URL if rawContent is empty and sourceUrl is http/https
     let contentToProcess = rawContent;
+    let fetchNote: string | null = null;
     if (!contentToProcess.trim() && /^https?:\/\//i.test(sourceUrl)) {
       try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 4500);
-        const fetchRes = await fetch(sourceUrl, {
-          signal: controller.signal,
-          headers: { 'User-Agent': 'GrowPilot-GTM-Bot/1.0 (+https://abukawser.xyz)' },
-        });
-        clearTimeout(timeout);
-        if (fetchRes.ok) {
-          contentToProcess = await fetchRes.text();
-        }
-      } catch {
+        contentToProcess = await fetchProspectPageSafely(sourceUrl);
+      } catch (err) {
+        fetchNote = err instanceof Error ? err.message : String(err);
+        console.warn(`[gtm] fetch blocked/failed for ${sourceUrl}: ${fetchNote}`);
         contentToProcess = `Company: ${companyName}. URL: ${sourceUrl}. Industry: ${industry}. Provides commercial services, customer consultations, and digital lead capture.`;
       }
     }
@@ -300,6 +677,7 @@ async function startServer() {
         outputTokens: 15,
         rawUnstrippedInputTokens: stripped.rawEstimatedTokens,
         latencyMs: Math.max(18, Date.now() - startMs),
+        modelCalled: false,
       });
 
       const skippedRecord: GtmPipelineRecord = {
@@ -316,6 +694,7 @@ async function startServer() {
         icpScore: icpEval.icpScore,
         icpThreshold: Number(icpThreshold),
         qualificationStatus: 'SKIPPED_LOW_ICP',
+        generationSource: 'deterministic-fallback',
         icpReasoning: icpEval.reasoning,
         matchedSignals: icpEval.matchedSignals,
         summary: `Lead scored ${icpEval.icpScore}/100 (below ${icpThreshold} threshold). Outbound generation was automatically skipped to save LLM tokens.`,
@@ -347,6 +726,7 @@ async function startServer() {
 
       gtmCache.set(cacheKey, skippedRecord);
       gtmRecordsStore = [skippedRecord, ...gtmRecordsStore];
+      persistState();
       telemetryLedger.totalRequests += 1;
       telemetryLedger.totalTokensUsed += skippedCost.totalTokens;
       telemetryLedger.totalCostUsd = Number(
@@ -367,84 +747,139 @@ async function startServer() {
       industry: industry.trim(),
       icpScore: icpEval.icpScore,
     });
+    let generationSource: GenerationSource = 'deterministic-fallback';
+    // Tier that is actually billed. Differs from the requested tier only when Gemini answered
+    // on the quota fallback, so cost and the UI label never claim a pricier model than ran.
+    let billedTier: ModelTierId = selectedTier;
+    const notes: string[] = [];
+    if (fetchNote) notes.push(`Source fetch: ${fetchNote}`);
 
-    const ai = getGenAIClient();
-    if (ai && selectedTier !== 'ollama-llama3.2-3b') {
+    const generatorSystemInstruction =
+      'You are a GTM Engineering & AI Automation specialist at GrowPilot. Extract ONLY factual claims present in the source text. Never invent numbers, awards, or metrics not in the text (you may mention 24/7 availability or $0.00 cached FAQs). When you restate a figure that IS on the page, keep its original unit and meaning ("10 AM" is a time, not a duration; never turn a source number into a different claim). If a duration, discount, fee or percentage is not stated in the source, write no number for it. Keep copy concise and high-converting. Reply as a single JSON object.';
+    const generatorUserContent = `Analyze this stripped source text for "${companyName}" (${industry}):\n\n${stripped.cleanedText}`;
+    const generatorSchema = {
+      type: Type.OBJECT,
+      properties: {
+        summary: {
+          type: Type.STRING,
+          description: '2-sentence factual summary of the business or article.',
+        },
+        extractedFacts: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING },
+          description: '3 to 4 concrete facts extracted directly from the source text.',
+        },
+        coldEmailSubject: {
+          type: Type.STRING,
+          description: 'Specific cold email subject line referencing their business.',
+        },
+        coldEmailBody: {
+          type: Type.STRING,
+          description: 'Short grounded cold email in three paragraphs pitching a 24/7 AI Agent plus n8n automation.',
+        },
+        whatsappOpener: {
+          type: Type.STRING,
+          description: '2-sentence WhatsApp outbound message.',
+        },
+        followUpMessage: {
+          type: Type.STRING,
+          description: 'Short polite 2-sentence follow-up message.',
+        },
+        socialMediaPost: {
+          type: Type.STRING,
+          description: 'Engaging LinkedIn / social media post summarizing the insight or case study.',
+        },
+      },
+      required: [
+        'summary',
+        'extractedFacts',
+        'coldEmailSubject',
+        'coldEmailBody',
+        'whatsappOpener',
+        'followUpMessage',
+        'socialMediaPost',
+      ],
+    };
+
+    function adoptGeneratedCopy(raw: string | null): boolean {
+      if (!raw) return false;
       try {
-        const geminiModel =
-          selectedTier === 'gemini-3.1-flash-lite' ? 'gemini-3.1-flash-lite' : 'gemini-3.8-flash';
-        const response = await ai.models.generateContent({
-          model: geminiModel,
-          contents: `Analyze this stripped source text for "${companyName}" (${industry}):\n\n${stripped.cleanedText}`,
-          config: {
-            systemInstruction:
-              'You are a GTM Engineering & AI Automation specialist at GrowPilot. Extract ONLY factual claims present in the source text. Never invent numbers, awards, or metrics not in the text (you may mention 24/7 availability or $0.00 cached FAQs). Keep copy concise and high-converting.',
-            temperature: 0.2,
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                summary: {
-                  type: Type.STRING,
-                  description: '2-sentence factual summary of the business or article.',
-                },
-                extractedFacts: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING },
-                  description: '3 to 4 concrete facts extracted directly from the source text.',
-                },
-                coldEmailSubject: {
-                  type: Type.STRING,
-                  description: 'Specific cold email subject line referencing their business.',
-                },
-                coldEmailBody: {
-                  type: Type.STRING,
-                  description: 'Short 3-paragraph grounded cold email pitching 24/7 AI Agent + n8n automation.',
-                },
-                whatsappOpener: {
-                  type: Type.STRING,
-                  description: '2-sentence WhatsApp outbound message.',
-                },
-                followUpMessage: {
-                  type: Type.STRING,
-                  description: 'Short polite 2-sentence follow-up message.',
-                },
-                socialMediaPost: {
-                  type: Type.STRING,
-                  description: 'Engaging LinkedIn / social media post summarizing the insight or case study.',
-                },
-              },
-              required: [
-                'summary',
-                'extractedFacts',
-                'coldEmailSubject',
-                'coldEmailBody',
-                'whatsappOpener',
-                'followUpMessage',
-                'socialMediaPost',
-              ],
-            },
-          },
-        });
-
-        if (response.text) {
-          const parsed = JSON.parse(response.text.trim());
-          if (parsed && parsed.summary && parsed.coldEmailBody) {
-            generated = {
-              summary: parsed.summary,
-              extractedFacts: Array.isArray(parsed.extractedFacts)
-                ? parsed.extractedFacts.slice(0, 4)
-                : generated.extractedFacts,
-              coldEmailSubject: parsed.coldEmailSubject || generated.coldEmailSubject,
-              coldEmailBody: parsed.coldEmailBody,
-              whatsappOpener: parsed.whatsappOpener || generated.whatsappOpener,
-              followUpMessage: parsed.followUpMessage || generated.followUpMessage,
-              socialMediaPost: parsed.socialMediaPost || generated.socialMediaPost,
-            };
-          }
-        }
+        const parsed = JSON.parse(raw.trim());
+        if (!parsed || !parsed.summary || !parsed.coldEmailBody) return false;
+        generated = {
+          summary: parsed.summary,
+          extractedFacts: Array.isArray(parsed.extractedFacts)
+            ? parsed.extractedFacts.slice(0, 4)
+            : generated.extractedFacts,
+          coldEmailSubject: parsed.coldEmailSubject || generated.coldEmailSubject,
+          coldEmailBody: parsed.coldEmailBody,
+          whatsappOpener: parsed.whatsappOpener || generated.whatsappOpener,
+          followUpMessage: parsed.followUpMessage || generated.followUpMessage,
+          socialMediaPost: parsed.socialMediaPost || generated.socialMediaPost,
+        };
+        return true;
       } catch {
-        // Fallback to deterministic grounded synthesis if API quota or network fails
+        return false;
+      }
+    }
+
+    if (selectedTier === 'ollama-llama3.2-3b') {
+      const ollamaText = await generateWithOllama(
+        `${generatorSystemInstruction}\nReturn JSON with keys: summary, extractedFacts, coldEmailSubject, coldEmailBody, whatsappOpener, followUpMessage, socialMediaPost.`,
+        generatorUserContent,
+        { json: true }
+      );
+      if (adoptGeneratedCopy(ollamaText)) {
+        generationSource = 'ollama-local';
+      } else {
+        notes.push(
+          ollamaText
+            ? 'Local Ollama returned a response that did not match the expected JSON shape.'
+            : `Local Ollama at ${OLLAMA_BASE_URL} did not answer; deterministic fallback used.`
+        );
+      }
+    } else {
+      const ai = getGenAIClient();
+      if (!ai) {
+        notes.push('GEMINI_API_KEY is not configured; deterministic fallback used.');
+      } else {
+        try {
+          const result = await generateWithGemini(
+            ai,
+            {
+              model: resolveApiModelId(selectedTier),
+              contents: generatorUserContent,
+              config: {
+                systemInstruction: generatorSystemInstruction,
+                temperature: 0.2,
+                responseMimeType: 'application/json',
+                responseSchema: generatorSchema,
+              },
+            },
+            'gtm',
+            { fallbackModel: resolveApiModelId('gemini-3.1-flash-lite') }
+          );
+
+          if (result.degraded) {
+            billedTier = 'gemini-3.1-flash-lite';
+            notes.push(
+              `${resolveApiModelId(selectedTier)} is out of quota for this key; copy was generated and billed by ${result.model}.`
+            );
+          }
+
+          if (adoptGeneratedCopy(result.text)) {
+            generationSource = 'gemini-llm';
+          } else {
+            notes.push('Model returned no usable JSON; deterministic fallback used.');
+            console.warn('[gtm] empty/invalid generation for', companyName);
+          }
+        } catch (err) {
+          notes.push(
+            `Generation failed on ${resolveApiModelId(selectedTier)} after ${GEMINI_MAX_ATTEMPTS} attempt(s): ` +
+              (err instanceof Error ? err.message : String(err))
+          );
+          console.error(`[gtm] ${resolveApiModelId(selectedTier)} generation failed:`, err);
+        }
       }
     }
 
@@ -469,12 +904,13 @@ async function startServer() {
     const outputTokens = Math.max(120, Math.ceil(outputCharLength / 4));
 
     const costMetrics = calculateRunCost({
-      modelUsed: selectedTier,
+      modelUsed: billedTier,
       cacheHit: false,
       inputTokens: stripped.cleanedEstimatedTokens + 65,
       outputTokens,
       rawUnstrippedInputTokens: stripped.rawEstimatedTokens + 250,
       latencyMs: Math.max(140, Date.now() - startMs),
+      modelCalled: generationSource !== 'deterministic-fallback',
     });
 
     const newRecord: GtmPipelineRecord = {
@@ -504,6 +940,8 @@ async function startServer() {
       },
       groundednessReport,
       costMetrics,
+      generationSource,
+      modelError: notes.length > 0 ? notes.join(' | ') : null,
     };
 
     gtmCache.set(cacheKey, newRecord);
@@ -511,6 +949,7 @@ async function startServer() {
       newRecord,
       ...gtmRecordsStore.filter((r) => r.companyName !== newRecord.companyName),
     ];
+    persistState();
 
     telemetryLedger.totalRequests += 1;
     telemetryLedger.totalTokensUsed += costMetrics.totalTokens;
@@ -521,9 +960,31 @@ async function startServer() {
       (telemetryLedger.totalSavedUsd + costMetrics.costSavedUsd).toFixed(6)
     );
 
+    const delivery = await dispatchToN8n(
+      'gtm.lead_generated',
+      buildLeadWebhookPayload({
+        event: 'gtm.lead_generated',
+        leadName: newRecord.companyName,
+        businessType: newRecord.industry,
+        channel: 'GTM Outbound',
+        needSummary: newRecord.summary.slice(0, 200),
+        monthlyBudgetUsd: 0,
+        leadScore: newRecord.qualificationStatus,
+        bookedSlot: null,
+        intent: 'GTM_OUTBOUND_READY',
+        tokensUsed: costMetrics.totalTokens,
+        costUsd: costMetrics.estimatedCostUsd,
+      })
+    );
+
     res.json({
       record: newRecord,
       telemetry: telemetryLedger,
+      automation: {
+        configured: delivery.configured,
+        delivered: delivery.delivered,
+        error: delivery.error,
+      },
     });
   });
 
@@ -545,7 +1006,7 @@ async function startServer() {
     const selectedTier: ModelTierId =
       modelPreference === 'ollama-llama3.2-3b' ||
       modelPreference === 'gemini-3.1-flash-lite' ||
-      modelPreference === 'gemini-3.8-flash'
+      modelPreference === 'gemini-3.5-flash'
         ? modelPreference
         : 'gemini-3.1-flash-lite';
 
@@ -612,6 +1073,7 @@ async function startServer() {
       telemetryLedger.totalSavedUsd = Number(
         (telemetryLedger.totalSavedUsd + costMetrics.costSavedUsd).toFixed(6)
       );
+      persistState();
 
       res.json({
         reply: faqMatch.faq.answer,
@@ -649,13 +1111,23 @@ async function startServer() {
     let nextAction = 'COLLECT_BUDGET_AND_NEED';
     let bookedSlot: string | null = null;
     let replyText = '';
+    let generationSource: GenerationSource = 'deterministic-fallback';
+    let billedTier: ModelTierId = selectedTier;
+    let modelError: string | null = null;
+
+    const qualificationSystemInstruction =
+      'You are GrowPilot’s 24/7 AI Lead Qualification Agent. Answer concisely in 2-3 sentences based strictly on these facts: Starter AI Agent + n8n package is $500/mo (25,000 BDT/mo), deploys in 48h on Docker, connects to WhatsApp, Google Sheets, and Google Calendar. Politely ask for their business type, automation goal, and monthly budget to book a discovery call.';
+    const qualificationContents = `Conversation history (last ${windowPre.trimmed.length} turns):\n${windowPre.trimmed
+      .map((t) => `${t.role.toUpperCase()}: ${t.content}`)
+      .join('\n')}\n\nRespond to the latest user message.`;
 
     if (extractedBudgetUsd >= 500) {
       intent = 'HIGH_INTENT_BOOKING';
       leadScore = 'HOT_BOOKED';
-      nextAction = 'CALL_GOOGLE_CALENDAR_AND_APPEND_CRM';
-      bookedSlot = 'Mon 21 Oct, 3:30 PM BDT (30-min Discovery Call)';
-      replyText = `Thank you! With a monthly budget of $${extractedBudgetUsd}/mo, you qualify for our full 24/7 WhatsApp + Website AI Agent & n8n CRM Automation suite. I checked our team's Google Calendar and reserved ${bookedSlot} for your walkthrough. Your lead profile has been logged to the GrowPilot CRM sheet as HOT_BOOKED.`;
+      nextAction = 'BOOK_CALENDAR_SLOT_AND_PUSH_TO_N8N';
+      const slot = nextAvailableSlot(new Date(), crmBookingsStore.filter((b) => b.leadScore === 'HOT_BOOKED').length);
+      bookedSlot = slot.label;
+      replyText = `Thank you! With a monthly budget of $${extractedBudgetUsd}/mo, you qualify for our full 24/7 WhatsApp + Website AI Agent & n8n CRM Automation suite. I reserved ${bookedSlot} for your walkthrough and queued your lead for the CRM automation.`;
     } else if (extractedBudgetUsd > 0 && extractedBudgetUsd < 500) {
       intent = 'LOW_BUDGET_NURTURE';
       leadScore = 'WARM_NURTURE';
@@ -665,41 +1137,66 @@ async function startServer() {
       replyText =
         "I'd love to help automate your workflow! To recommend the right AI Agent + n8n setup and check our calendar slots, could you quickly share: (1) What your business does, (2) Whether you need WhatsApp/web booking or GTM outbound, and (3) Your approximate monthly budget (e.g., $500+/mo)?";
 
-      const ai = getGenAIClient();
-      if (ai && selectedTier !== 'ollama-llama3.2-3b') {
-        try {
-          const geminiRes = await ai.models.generateContent({
-            model:
-              selectedTier === 'gemini-3.8-flash' ? 'gemini-3.8-flash' : 'gemini-3.1-flash-lite',
-            contents: `Conversation history (last ${windowPre.trimmed.length} turns):\n${windowPre.trimmed
-              .map((t) => `${t.role.toUpperCase()}: ${t.content}`)
-              .join('\n')}\n\nRespond to the latest user message.`,
-            config: {
-              systemInstruction:
-                'You are GrowPilot’s 24/7 AI Lead Qualification Agent. Answer concisely in 2-3 sentences based strictly on these facts: Starter AI Agent + n8n package is $500/mo (25,000 BDT/mo), deploys in 48h on Docker, connects to WhatsApp, Google Sheets, and Google Calendar. Politely ask for their business type, automation goal, and monthly budget to book a discovery call.',
-              temperature: 0.2,
-            },
-          });
-          if (geminiRes.text) {
-            replyText = geminiRes.text.trim();
+      if (selectedTier === 'ollama-llama3.2-3b') {
+        const ollamaReply = await generateWithOllama(qualificationSystemInstruction, qualificationContents, {
+          json: false,
+        });
+        if (ollamaReply) {
+          replyText = ollamaReply;
+          generationSource = 'ollama-local';
+        } else {
+          modelError = `Local Ollama at ${OLLAMA_BASE_URL} did not answer; deterministic prompt used.`;
+        }
+      } else {
+        const ai = getGenAIClient();
+        if (!ai) {
+          modelError = 'GEMINI_API_KEY is not configured; deterministic prompt used.';
+        } else {
+          try {
+            const result = await generateWithGemini(
+              ai,
+              {
+                model: resolveApiModelId(selectedTier),
+                contents: qualificationContents,
+                config: {
+                  systemInstruction: qualificationSystemInstruction,
+                  temperature: 0.2,
+                },
+              },
+              'agent',
+              { fallbackModel: resolveApiModelId('gemini-3.1-flash-lite') }
+            );
+            if (result.degraded) {
+              billedTier = 'gemini-3.1-flash-lite';
+              modelError = `${resolveApiModelId(selectedTier)} is out of quota for this key; reply generated and billed by ${result.model}.`;
+            }
+            if (result.text) {
+              replyText = result.text.trim();
+              generationSource = 'gemini-llm';
+            } else if (!modelError) {
+              modelError = 'Model returned an empty reply; deterministic prompt used.';
+            }
+          } catch (err) {
+            modelError = err instanceof Error ? err.message : String(err);
+            console.error(`[agent] ${resolveApiModelId(selectedTier)} reply failed:`, err);
           }
-        } catch {
-          // Keep deterministic qualification prompt on fallback
         }
       }
     }
 
+    const modelCalled = generationSource !== 'deterministic-fallback';
     const inputTokens = Math.ceil(
       windowPre.trimmed.reduce((acc, m) => acc + m.content.length, 0) / 4 + 55
     );
     const outputTokens = Math.ceil(replyText.length / 4);
 
     const costMetrics = calculateRunCost({
-      modelUsed: selectedTier,
+      modelUsed: billedTier,
       cacheHit: false,
       inputTokens,
       outputTokens,
       latencyMs: Math.max(115, Date.now() - startMs),
+      modelCalled,
     });
 
     const assistantTurn: ChatTurn = {
@@ -711,6 +1208,7 @@ async function startServer() {
     const finalWindow = trimConversationWindow([...windowPre.trimmed, assistantTurn], 6);
     sessionHistoryStore.set(sessionId, finalWindow.trimmed);
 
+    let automationStatus: AutomationDeliveryStatus = 'not_configured';
     if (extractedBudgetUsd > 0) {
       const newBooking: CrmBookingRecord = {
         id: `crm-${Date.now()}`,
@@ -733,7 +1231,32 @@ async function startServer() {
         costUsd: costMetrics.estimatedCostUsd,
         createdAt: 'Just now',
       };
+
+      const delivery = await dispatchToN8n(
+        'lead.qualified',
+        buildLeadWebhookPayload({
+          event: 'lead.qualified',
+          leadName: newBooking.leadName,
+          businessType: newBooking.businessType,
+          channel: newBooking.channel,
+          needSummary: newBooking.needSummary,
+          monthlyBudgetUsd: newBooking.monthlyBudgetUsd,
+          leadScore: newBooking.leadScore,
+          bookedSlot: bookedSlot,
+          intent,
+          tokensUsed: newBooking.tokensUsed,
+          costUsd: newBooking.costUsd,
+        })
+      );
+      automationStatus = !delivery.configured
+        ? 'not_configured'
+        : delivery.delivered
+          ? 'delivered'
+          : 'failed';
+      newBooking.automationStatus = automationStatus;
+
       crmBookingsStore = [newBooking, ...crmBookingsStore];
+      persistState();
     }
 
     telemetryLedger.totalRequests += 1;
@@ -744,6 +1267,7 @@ async function startServer() {
     telemetryLedger.totalSavedUsd = Number(
       (telemetryLedger.totalSavedUsd + costMetrics.costSavedUsd).toFixed(6)
     );
+    persistState();
 
     res.json({
       reply: replyText,
@@ -756,6 +1280,9 @@ async function startServer() {
         budgetUsd: extractedBudgetUsd,
         nextAction,
         bookedSlot,
+        generationSource,
+        modelError,
+        automationStatus,
         slidingWindowTurns: finalWindow.trimmed.length,
         droppedTurns: finalWindow.droppedCount,
         costMetrics,
@@ -765,7 +1292,7 @@ async function startServer() {
     });
   });
 
-  // 6. Real-Time Voice Agent WebSocket Server (`gemini-3.8-live`) on `/live`
+  // 6. Real-Time Voice Agent WebSocket Server on `/live`
   const wss = new WebSocketServer({ noServer: true });
   const viteHmrWss = new WebSocketServer({ noServer: true });
 
@@ -795,7 +1322,7 @@ async function startServer() {
         JSON.stringify({
           type: 'error',
           message:
-            'GEMINI_API_KEY is not configured. Please check Settings > Secrets to enable live voice streaming with gemini-3.8-live.',
+            `GEMINI_API_KEY is not configured. Please set it in .env to enable live voice streaming with ${LIVE_MODEL_ID}.`,
         })
       );
       clientWs.close();
@@ -805,7 +1332,7 @@ async function startServer() {
     let liveSession: Awaited<ReturnType<typeof ai.live.connect>> | null = null;
 
     const sessionPromise = ai.live.connect({
-      model: 'gemini-3.8-live',
+      model: LIVE_MODEL_ID,
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
@@ -825,7 +1352,7 @@ async function startServer() {
             clientWs.send(
               JSON.stringify({
                 type: 'connected',
-                model: 'gemini-3.8-live',
+                model: LIVE_MODEL_ID,
                 voice: voiceName,
               })
             );
@@ -893,6 +1420,14 @@ async function startServer() {
               if (call.name === 'book_discovery_call') {
                 const args = (call.args || {}) as Record<string, unknown>;
                 const budgetNum = Number(args.monthlyBudgetUsd || 600);
+                const preferredSlot = String(args.preferredSlot || '').trim();
+                const resolvedSlot =
+                  preferredSlot ||
+                  nextAvailableSlot(
+                    new Date(),
+                    crmBookingsStore.filter((b) => b.leadScore === 'HOT_BOOKED').length
+                  ).label;
+
                 const newBooking: CrmBookingRecord = {
                   id: `crm-live-${Date.now()}`,
                   leadName: String(args.leadName || 'Voice Caller Lead'),
@@ -903,10 +1438,10 @@ async function startServer() {
                   ),
                   monthlyBudgetUsd: budgetNum,
                   leadScore: budgetNum >= 500 ? 'HOT_BOOKED' : 'WARM_NURTURE',
-                  bookedSlot: String(
-                    args.preferredSlot || 'Tue 22 Oct, 4:00 PM BDT (Voice Booked)'
-                  ),
-                  modelUsed: 'gemini-3.8-live',
+                  bookedSlot: resolvedSlot,
+                  modelUsed: LIVE_MODEL_ID,
+                  // Live audio is billed per minute upstream and not metered per turn here;
+                  // these are order-of-magnitude estimates, not measured usage.
                   tokensUsed: 320,
                   costUsd: 0.00019,
                   createdAt: 'Live Voice Call',
@@ -914,6 +1449,7 @@ async function startServer() {
 
                 crmBookingsStore = [newBooking, ...crmBookingsStore];
                 telemetryLedger.totalRequests += 1;
+                persistState();
 
                 clientWs.send(
                   JSON.stringify({
@@ -923,23 +1459,58 @@ async function startServer() {
                   })
                 );
 
-                sessionPromise
-                  .then((sess) => {
-                    sess.sendToolResponse({
-                      functionResponses: [
-                        {
-                          id: call.id,
-                          name: call.name,
-                          response: {
-                            status: 'BOOKED',
-                            bookedSlot: newBooking.bookedSlot,
-                            leadScore: newBooking.leadScore,
-                          },
-                        },
-                      ],
-                    });
+                // Voice callbacks are synchronous, so CRM sync settles after the booking is shown.
+                dispatchToN8n(
+                  'lead.qualified',
+                  buildLeadWebhookPayload({
+                    event: 'lead.qualified',
+                    leadName: newBooking.leadName,
+                    businessType: newBooking.businessType,
+                    channel: 'Voice Call',
+                    needSummary: newBooking.needSummary,
+                    monthlyBudgetUsd: newBooking.monthlyBudgetUsd,
+                    leadScore: newBooking.leadScore,
+                    bookedSlot: newBooking.bookedSlot,
+                    intent: 'VOICE_BOOKING',
+                    tokensUsed: newBooking.tokensUsed,
+                    costUsd: newBooking.costUsd,
                   })
-                  .catch(() => {});
+                ).then((delivery) => {
+                  newBooking.automationStatus = !delivery.configured
+                    ? 'not_configured'
+                    : delivery.delivered
+                      ? 'delivered'
+                      : 'failed';
+                  if (clientWs.readyState === WebSocket.OPEN) {
+                    clientWs.send(
+                      JSON.stringify({
+                        type: 'crm_booking',
+                        booking: newBooking,
+                        crmBookings: crmBookingsStore,
+                      })
+                    );
+                  }
+                  sessionPromise
+                    .then((sess) => {
+                      sess.sendToolResponse({
+                        functionResponses: [
+                          {
+                            id: call.id,
+                            name: call.name,
+                            response: {
+                              status: 'BOOKED',
+                              bookedSlot: newBooking.bookedSlot,
+                              leadScore: newBooking.leadScore,
+                              crmSync: newBooking.automationStatus,
+                            },
+                          },
+                        ],
+                      });
+                    })
+                    .catch((err: unknown) => {
+                      console.error('[live] failed to send tool response:', err);
+                    });
+                });
               }
             }
           }
@@ -977,7 +1548,7 @@ async function startServer() {
               message:
                 err instanceof Error
                   ? err.message
-                  : 'Failed to initialize gemini-3.8-live session.',
+                  : `Failed to initialize ${LIVE_MODEL_ID} session.`,
             })
           );
           clientWs.close();
@@ -1002,7 +1573,9 @@ async function startServer() {
               });
             }
           })
-          .catch(() => {});
+          .catch((err: unknown) => {
+            console.error('[live] failed to forward client frame to Gemini Live:', err);
+          });
       } catch {
         // Ignore malformed frame
       }

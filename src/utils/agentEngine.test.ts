@@ -9,6 +9,8 @@ import {
   verifyGroundedness,
   trimConversationWindow,
   formatGtmLeadsCsv,
+  nextAvailableSlot,
+  isPrivateOrLoopbackIp,
   type FaqItem,
 } from './agentEngine.ts';
 
@@ -148,7 +150,7 @@ test('formatGtmLeadsCsv exports company name, industry, and ICP match score prop
       qualificationStatus: 'QUALIFIED_OUTBOUND',
       sourceUrl: 'https://dentacare-dhaka.example.com',
       tokensSavedPct: 37.6,
-      modelLabel: 'Gemini 3.8 Flash',
+      modelLabel: 'Gemini 3.5 Flash',
       cacheHit: false,
       estimatedCostUsd: 0.000185,
       summary: '12-chair specialist clinic in Dhaka.',
@@ -162,4 +164,56 @@ test('formatGtmLeadsCsv exports company name, industry, and ICP match score prop
   assert.equal(lines[1].includes('"DentaCare Aesthetic & Implant Center Dhaka"'), true);
   assert.equal(lines[1].includes('"Healthcare & Dental Clinic"'), true);
   assert.equal(lines[1].includes(',96,'), true);
+});
+
+test('calculateRunCost bills nothing when no model was actually called', () => {
+  const templateRun = calculateRunCost({
+    modelUsed: 'gemini-3.5-flash',
+    cacheHit: false,
+    inputTokens: 400,
+    outputTokens: 200,
+    modelCalled: false,
+  });
+  const llmRun = calculateRunCost({
+    modelUsed: 'gemini-3.5-flash',
+    cacheHit: false,
+    inputTokens: 400,
+    outputTokens: 200,
+  });
+
+  assert.equal(templateRun.totalTokens, 0);
+  assert.equal(templateRun.estimatedCostUsd, 0);
+  assert.equal(llmRun.totalTokens, 600);
+  assert.equal(llmRun.estimatedCostUsd > templateRun.estimatedCostUsd, true);
+});
+
+test('nextAvailableSlot returns a future weekday slot instead of a fixed date string', () => {
+  // A Saturday evening enquiry must not be offered a weekend or past slot.
+  const saturdayEvening = new Date('2026-10-17T18:00:00Z');
+  const slot = nextAvailableSlot(saturdayEvening, 0);
+  const opened = new Date(slot.startsAt.getTime() + 6 * 60 * 60 * 1000);
+
+  assert.equal(slot.startsAt.getTime() > saturdayEvening.getTime(), true);
+  assert.equal([0, 6].includes(opened.getUTCDay()), false);
+  assert.equal(slot.label.includes('BDT'), true);
+});
+
+test('isPrivateOrLoopbackIp blocks metadata, private and link-local addresses', () => {
+  for (const ip of [
+    '169.254.169.254',
+    '127.0.0.1',
+    '10.24.30.5',
+    '172.16.0.9',
+    '192.168.1.1',
+    '0.0.0.0',
+    '::1',
+    'fd00::1',
+    'fe80::1',
+  ]) {
+    assert.equal(isPrivateOrLoopbackIp(ip), true, `${ip} should be blocked`);
+  }
+
+  for (const ip of ['8.8.8.8', '142.250.80.46', '2606:4700:4700::1111']) {
+    assert.equal(isPrivateOrLoopbackIp(ip), false, `${ip} should be allowed`);
+  }
 });

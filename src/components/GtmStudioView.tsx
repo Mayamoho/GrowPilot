@@ -6,6 +6,8 @@ import {
 } from '../data/seedData';
 import {
   MODEL_TIERS,
+  SELECTABLE_MODEL_TIERS,
+  formatTierPriceLabel,
   formatGtmLeadsCsv,
   type ModelTierId,
 } from '../utils/agentEngine';
@@ -47,7 +49,7 @@ export const GtmStudioView: React.FC<GtmStudioViewProps> = ({
   const [industry, setIndustry] = useState<string>(defaultPreset.industry);
   const [rawContent, setRawContent] = useState<string>(defaultPreset.rawHtmlSample);
   const [icpThreshold, setIcpThreshold] = useState<number>(60);
-  const [modelPreference, setModelPreference] = useState<ModelTierId>('gemini-3.8-flash');
+  const [modelPreference, setModelPreference] = useState<ModelTierId>('gemini-3.5-flash');
   const [activeOutputTab, setActiveOutputTab] = useState<
     'cold-email' | 'whatsapp' | 'social-post' | 'groundedness'
   >('cold-email');
@@ -340,15 +342,11 @@ export const GtmStudioView: React.FC<GtmStudioViewProps> = ({
                   onChange={(e) => setModelPreference(e.target.value as ModelTierId)}
                   className="w-full px-3 py-2 text-xs font-medium bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
                 >
-                  <option value="ollama-llama3.2-3b">
-                    Ollama Llama 3.2 3B (Ubuntu Local · $0.00)
-                  </option>
-                  <option value="gemini-3.1-flash-lite">
-                    Gemini 3.1 Flash-Lite ($0.075 / 1M tok)
-                  </option>
-                  <option value="gemini-3.8-flash">
-                    Gemini 3.8 Flash ($0.15 / 1M tok)
-                  </option>
+                  {SELECTABLE_MODEL_TIERS.map((tierId) => (
+                    <option key={tierId} value={tierId}>
+                      {formatTierPriceLabel(tierId)}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -416,10 +414,21 @@ export const GtmStudioView: React.FC<GtmStudioViewProps> = ({
                     <span aria-hidden="true">·</span>
                     <span className="font-mono tabular-nums">{activeRecord.timestamp}</span>
                     <span aria-hidden="true">·</span>
-                    <span className="font-semibold text-teal-800">
+                    <span
+                      className={`font-semibold ${
+                        !activeRecord.costMetrics.cacheHit &&
+                        activeRecord.generationSource === 'deterministic-fallback'
+                          ? 'text-amber-700'
+                          : 'text-teal-800'
+                      }`}
+                    >
                       {activeRecord.costMetrics.cacheHit
                         ? 'Layer 0 Cache Hit (0 Tokens · $0.00)'
-                        : `${activeRecord.costMetrics.modelLabel}`}
+                        : activeRecord.generationSource === 'deterministic-fallback'
+                          ? 'Deterministic template (no model billed)'
+                          : activeRecord.generationSource === 'ollama-local'
+                            ? `Local Ollama · ${activeRecord.costMetrics.modelLabel}`
+                            : `${activeRecord.costMetrics.modelLabel}`}
                     </span>
                   </div>
                   <h2 className="font-display text-lg font-bold text-slate-900 mt-1">
@@ -449,6 +458,12 @@ export const GtmStudioView: React.FC<GtmStudioViewProps> = ({
                   </div>
                 </div>
               </div>
+
+              {activeRecord.modelError && (
+                <div className="mt-2.5 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+                  {activeRecord.modelError}
+                </div>
+              )}
 
               {/* 4-Column Pipeline Efficiency Strip */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-2.5 px-3.5 bg-slate-50 border border-slate-200 rounded-lg">
