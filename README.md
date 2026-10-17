@@ -189,6 +189,27 @@ docker compose down
 
 GrowPilot is the **agent**; n8n is the **arm that reaches your spreadsheet, calendar and WhatsApp**. The server POSTs to `N8N_WEBHOOK_URL` whenever something worth acting on happens. Build one workflow with a *Webhook (POST)* trigger at path `growpilot-lead` and everything below lands in it.
 
+### Fastest free setup (self-hosted n8n, no n8n Cloud account, $0)
+
+A ready-made workflow ships with the repo at **`n8n/growpilot-workflow.json`** — a *Webhook (POST)* trigger on path `growpilot-lead`, a *Code* node that normalizes the lead into flat keys, and a *Respond to Webhook* node that acks with `{"received":true,…}`. It needs no credentials, so it works the moment it is active.
+
+1. Start the automation engine (GrowPilot's own n8n, published on host port **5680** so it never clashes with an n8n you already run): `docker compose up -d n8n`
+2. Open `http://localhost:5680`, create the local owner account (one time, on your machine, free), then **⋯ menu → Import from File** and pick `n8n/growpilot-workflow.json`.
+3. Flip the **Active** toggle top-right. This is the step that decides whether the production URL answers — n8n deliberately refuses to activate workflows from the CLI in regular deployment mode, so `n8n import:workflow` lands it *inactive* and you turn it on here.
+4. Point the agent at it:
+   - server running on the host (`npm run dev`): `N8N_WEBHOOK_URL="http://127.0.0.1:5680/webhook/growpilot-lead"`
+   - server running inside this compose stack: the default `http://n8n:5678/webhook/growpilot-lead` already resolves over `growpilot-net`
+5. Check it from a terminal before sending any real traffic:
+
+```bash
+curl -s -X POST -H 'Content-Type: application/json' \
+  -d '{"event":"lead.qualified","lead_name":"Test Clinic","lead_score":"HOT_BOOKED"}' \
+  http://127.0.0.1:5680/webhook/growpilot-lead
+# → {"received":true,"event":"lead.qualified","lead_score":"HOT_BOOKED"}
+```
+
+From here, add whatever you actually want to happen to a lead — *Google Sheets Append*, *Google Calendar Create Event*, *WhatsApp send*, *email* — as nodes downstream of the Code node. Every one of those runs on your own hardware; the only paid option in this stack is n8n Cloud, which you are not using.
+
 | Event | Fires when | Payload keys |
 |---|---|---|
 | `lead.qualified` | A chat or voice caller shares a budget and is scored `HOT_BOOKED` / `WARM_NURTURE` | `lead_name`, `business_type`, `channel`, `need_summary`, `extracted_budget_usd`, `lead_score`, `intent`, `booked_slot`, `tokens_used`, `cost_usd` |

@@ -1,0 +1,55 @@
+{
+  "name": "GrowPilot Lead Intake",
+  "nodes": [
+    {
+      "id": "gp-webhook-0001",
+      "name": "GrowPilot Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-180, 0],
+      "webhookId": "growpilot-lead",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "growpilot-lead",
+        "options": {
+          "rawBody": false
+        },
+        "responseMode": "responseNode"
+      }
+    },
+    {
+      "id": "gp-code-0002",
+      "name": "Normalize Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [40, 0],
+      "parameters": {
+        "jsCode": "const body = $json.body ?? $json;\nreturn [{\n  json: {\n    event: body.event ?? 'unknown',\n    lead_name: body.lead_name ?? '',\n    business_type: body.business_type ?? '',\n    channel: body.channel ?? '',\n    need_summary: body.need_summary ?? '',\n    extracted_budget_usd: body.extracted_budget_usd ?? 0,\n    lead_score: body.lead_score ?? '',\n    intent: body.intent ?? '',\n    booked_slot: body.booked_slot ?? '',\n    tokens_used: body.tokens_used ?? 0,\n    cost_usd: body.cost_usd ?? 0,\n    source: body.source ?? 'growpilot',\n    received_at: new Date().toISOString(),\n  },\n}];"
+      }
+    },
+    {
+      "id": "gp-respond-0003",
+      "name": "Acknowledge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [260, 0],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"received\": true, \"event\": $json.event, \"lead_score\": $json.lead_score } }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "GrowPilot Webhook": {
+      "main": [[{ "node": "Normalize Lead", "type": "main", "index": 0 }]]
+    },
+    "Normalize Lead": {
+      "main": [[{ "node": "Acknowledge", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": true,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "templateCredsSetupCompleted": true }
+}
