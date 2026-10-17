@@ -46,6 +46,199 @@ You can test the application right now without installing anything:
 
 ---
 
+## Step-by-Step Local Setup & Installation
+
+You can run GrowPilot locally on **Ubuntu 24.04 LTS**, **macOS**, or **Windows (WSL2)** either directly with Node.js or inside Docker containers alongside local **Ollama** and **n8n**.
+
+### Prerequisites
+
+- **Node.js 20 or 22+** (`node -v`) and **npm** (`npm -v`)
+- **Git** (`git --version`)
+- *(Optional)* **Docker & Docker Compose** (`docker compose version`) if you want to run the containerized `growpilot-agent` + `ollama` + `n8n` stack.
+
+---
+
+### Option A: Run Directly with Node.js (Fastest Local Setup)
+
+#### Step 1: Clone the repository and enter the project folder
+
+```bash
+git clone https://github.com/Mayamoho/GrowPilot.git
+cd GrowPilot
+```
+
+*(If you already cloned the repository earlier, run `git pull origin main` inside `~/Documents/GrowPilot` so you have the latest `package.json`, `.npmrc`, `Dockerfile`, and `docker-compose.yml`).*
+
+#### Step 2: Install dependencies
+
+```bash
+npm install --legacy-peer-deps
+```
+
+> **Note:** The repository includes an `.npmrc` file with `legacy-peer-deps=true` and pins `esbuild` to `^0.28.0` to match `vite@8.3.x`. Passing `--legacy-peer-deps` guarantees a clean install across all npm versions.
+
+#### Step 3: Run the unit test suite
+
+```bash
+npm test
+```
+
+All 10 pure-logic unit tests in `src/utils/agentEngine.test.ts` run in under half a second with no API key or internet connection required:
+
+```text
+✔ stripHtmlAndBoilerplate removes scripts, styles, nav, footer and saves tokens
+✔ matchFaqCache hits Layer 0 zero-token cache for FAQ questions and bypasses qualification messages
+✔ calculateRunCost returns $0.00 for Layer 0 cache hits and Ollama local models
+✔ evaluateIcpFit scores high-fit leads above threshold and skips low-fit leads
+✔ verifyGroundedness 5-layer gate passes truthful claims and catches fabricated numbers
+✔ trimConversationWindow caps memory at 6 messages and reports saved tokens
+✔ formatGtmLeadsCsv exports company name, industry, and ICP match score properly
+✔ calculateRunCost bills nothing when no model was actually called
+✔ nextAvailableSlot returns a future weekday slot instead of a fixed date string
+✔ isPrivateOrLoopbackIp blocks metadata, private and link-local addresses
+ℹ tests 10 | pass 10 | fail 0
+```
+
+#### Step 4: (Optional) Add a free Gemini API key
+
+GrowPilot's HTML stripper, Layer 0 FAQ cache, ICP scorer, 5-layer groundedness verifier, CSV exporter, and deterministic fallback engine all work **100% offline with no API key**.
+
+If you want live cloud generation from `gemini-3.1-flash-lite`, `gemini-3.5-flash`, or real-time voice calls via `gemini-3.1-flash-live-preview`:
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and paste a free API key from [Google AI Studio (`aistudio.google.com/apikey`)](https://aistudio.google.com/apikey):
+
+```dotenv
+GEMINI_API_KEY="AIzaSyYourKeyHere"
+PORT=3000
+OLLAMA_MODEL="llama3.2:3b"
+OLLAMA_BASE_URL="http://127.0.0.1:11434"
+N8N_WEBHOOK_URL="http://127.0.0.1:5678/webhook/growpilot-lead"
+GEMINI_MAX_ATTEMPTS="4"
+GEMINI_QUOTA_FALLBACK="1"
+```
+
+> `GEMINI_API_KEY` is the only value the AI paths truly require. Everything else has a working default.
+
+**What happens when a model tier says no** (observed on a real free-tier key, not hypothetical):
+
+| Response | GrowPilot's behaviour |
+|---|---|
+| `503 high demand`, `429 rate limit` | Retries with exponential backoff capped at 12s plus jitter, up to `GEMINI_MAX_ATTEMPTS` tries. |
+| `429 exceeded your current quota / check your plan and billing` | Permanent for that tier. GrowPilot re-answers with `gemini-3.1-flash-lite`, bills the run at the tier that actually replied, and writes `gemini-3.5-flash is out of quota for this key; copy was generated and billed by gemini-3.1-flash-lite.` into the run's audit strip. |
+| Any other failure | Deterministic template, labelled `Deterministic template (no model billed)` with `$0.00` and `modelCalled: false`. Never a silent lie. |
+
+That degrade is this project's own thesis — route to the smallest model that answers — so it is on by default. Set `GEMINI_QUOTA_FALLBACK=""` (or `0`) to make a quota-blocked tier surface the error instead of quietly re-billing a cheaper model.
+
+#### Step 5: Start the full-stack server on Port 3000
+
+```bash
+npm run dev
+```
+
+Open **[http://localhost:3000](http://localhost:3000)** in your browser.
+
+---
+
+### Option B: Run on Ubuntu 24.04 with Docker Compose (Agent + Local Ollama + n8n)
+
+If you want to self-host the entire stack in background containers — including the GrowPilot full-stack server (`:3000`), a local **Ollama** server running `llama3.2:3b` for `$0.00/token` (`:11434`), and self-hosted **n8n** (host port `5680` by default, because `5678` is n8n's own default and is already taken on most machines that have run n8n before) — use the root `docker-compose.yml`:
+
+```bash
+# 1. Make sure you are inside the GrowPilot project folder and have the latest files
+cd ~/Documents/GrowPilot
+git pull origin main
+
+# 2. Confirm docker-compose.yml and Dockerfile are present
+ls -la docker-compose.yml Dockerfile
+
+# 3. Build and start all three containers in the background
+docker compose up -d --build
+
+# 4. Check that all containers are running
+docker compose ps
+```
+
+| Service | Local URL | Purpose |
+|---|---|---|
+| `growpilot-agent` | `http://localhost:3000` | GrowPilot web app, Express REST API (`/api/*`), and `/live` voice WebSocket server |
+| `growpilot-n8n` | `http://localhost:5680` | Self-hosted n8n workflow automation engine (override the host port with `N8N_HOST_PORT=…`) |
+| `growpilot-ollama` | `http://localhost:11434` | Local open-source LLM (`llama3.2:3b`) for zero-cost local inference |
+
+To view live container logs or stop the stack:
+
+```bash
+docker compose logs -f growpilot-agent
+docker compose down
+```
+
+#### Port and build collisions you may hit on a machine that already runs other stacks
+
+| Command output | What it means | Fix |
+|---|---|---|
+| `Bind for 0.0.0.0:5678 failed: port is already allocated` | another n8n (not this stack's) already owns 5678 | GrowPilot now publishes n8n on **5680** by default. To use another port: `N8N_HOST_PORT=5699 docker compose up -d --build`. Inside the network the container still listens on 5678, so the agent's default `N8N_WEBHOOK_URL=http://n8n:5678/webhook/growpilot-lead` keeps working. |
+| `Bind for 0.0.0.0:3000 failed: port is already allocated` | your `npm run dev` server is still running on 3000 | stop it (`Ctrl+C` in that terminal) before `docker compose up`, or run only one of the two. |
+| `[6/6] RUN npm run build` → `Cannot find native binding … @rolldown/binding-linux-x64-musl` | Vite 8 bundles through **rolldown**, which ships one native binary per libc. On `node:22-alpine` the musl optional dependency is skipped by the npm optional-deps bug (`npm/cli#4828`), so the build dies in the image while working fine on your host | pull the current `Dockerfile` — the image is built on **`node:22-slim` (glibc)** and the Dockerfile no longer copies a host-generated `package-lock.json` (a lockfile pins the host's platform optionals). A `.dockerignore` was added for the same reason: `COPY . .` used to drag the host's `node_modules` — and your `.env` — into the image. |
+
+---
+
+## Automation Contract: What GrowPilot Actually Sends
+
+GrowPilot is the **agent**; n8n is the **arm that reaches your spreadsheet, calendar and WhatsApp**. The server POSTs to `N8N_WEBHOOK_URL` whenever something worth acting on happens. Build one workflow with a *Webhook (POST)* trigger at path `growpilot-lead` and everything below lands in it.
+
+| Event | Fires when | Payload keys |
+|---|---|---|
+| `lead.qualified` | A chat or voice caller shares a budget and is scored `HOT_BOOKED` / `WARM_NURTURE` | `lead_name`, `business_type`, `channel`, `need_summary`, `extracted_budget_usd`, `lead_score`, `intent`, `booked_slot`, `tokens_used`, `cost_usd` |
+| `gtm.lead_generated` | A scraped prospect clears the ICP gate and outbound copy is produced | same shape, with `lead_score` = `QUALIFIED_OUTBOUND` and `channel` = `GTM Outbound` |
+
+Both calls carry HTTP Basic auth when `N8N_USER` / `N8N_PASSWORD` are set, time out after 6s, and **never fail the user-facing request** — a down automation must not break a customer's chat. Instead the truth is shown in the UI and in `GET /api/state` under `automation`:
+
+- `delivered` — n8n accepted the lead
+- `failed` — it was configured but rejected or was unreachable
+- `not_configured` — `N8N_WEBHOOK_URL` is empty, so nothing left the server
+
+**A `404` from n8n almost always means the workflow is not active.** n8n only registers a production webhook path while the workflow containing the *Webhook* node is switched on, and it answers an unregistered path with:
+
+```json
+{"code":404,"message":"The requested webhook \"POST growpilot-lead\" is not registered.",
+ "hint":"The workflow must be active for a production URL to run successfully…"}
+```
+
+GrowPilot copies that `message` + `hint` into the `[n8n]` log line and into `automation.last.error` in `GET /api/state`, so the terminal tells you what to click instead of leaving a bare status code. To fix it: open that workflow and flip the **Active** toggle in the top-right of the editor — the *Test* URL (`/webhook-test/…`) only listens while **Execute workflow** is waiting, so point `N8N_WEBHOOK_URL` at the **Production** URL (`/webhook/growpilot-lead`). Also confirm the URL targets the n8n you intend: `http://n8n:5678/...` inside the Docker network, `http://127.0.0.1:5680/...` from a host-run server against this stack's n8n.
+
+`GET /api/state` also reports `engine`: whether a `GEMINI_API_KEY` is present, the resolved Ollama base URL, and the live voice model ID.
+
+**Booking slots** are computed by `nextAvailableSlot()` — the next free 30-minute weekday slot in BDT business hours, advancing past booked capacity. Nothing queries a real Google Calendar; to make the slot a real calendar event, add a *Google Calendar* node downstream of the webhook in n8n.
+
+**Persistence**: FAQ rules, CRM bookings, GTM records and the telemetry ledger are written to `.data/growpilot-state.json` (Docker: the `growpilot_data` volume at `/data`) and restored on boot, so captured leads survive a restart. The static Vercel deployment has no server, so it runs the same engine in the browser with an in-memory cache only.
+
+**Security note on the scraper**: `/api/gtm/analyze` fetches user-supplied URLs. It rejects non-HTTP(S) schemes, resolves the hostname and refuses any address in loopback, RFC1918, link-local (including the `169.254.169.254` cloud metadata range), CGNAT or IPv6 unique-local space, follows redirects manually with the same check on every hop, and caps the response at 400 KB. Without this, the endpoint was an open proxy into the Docker network — `n8n:5678` sits on that network.
+
+---
+
+## Deploying on Vercel & Linking Subdomains
+
+GrowPilot works both when connected to the Node/Docker Express server **and** when deployed as a static app on Vercel (when `/api/*` is not present on a static host, `src/App.tsx` automatically executes the same `agentEngine` functions directly in the browser).
+
+> Static deployment is a genuine demo of the deterministic engine, not the full agent: no model is billed, no prospect URL is fetched, no n8n webhook fires, and the live-voice tab cannot connect (it needs the server's `/live` WebSocket). See [What the Vercel URLs are — and what they are not](#-what-the-vercel-urls-are--and-what-they-are-not).
+
+1. Push your repository to GitHub.
+2. Import the repository into **[Vercel](https://vercel.com/new)** with:
+   - **Framework Preset:** `Vite`
+   - **Build Command:** `npm run build`
+   - **Output Directory:** `dist`
+   - **Install Command:** `npm install --legacy-peer-deps`
+3. **Linking the `gtm` and `agent` subdomains:**
+   - In your Vercel project, go to **Settings → Domains** and add your two subdomains (for example, `gtm.yourdomain.com` and `agent.yourdomain.com`), then add the matching `CNAME` records (`cname.vercel-dns.com`) in your DNS provider.
+   - Because `src/App.tsx` inspects `window.location.hostname` automatically:
+     - Visiting **`gtm.*`** opens Tab 1 (**`GTM Pipeline`**) by default.
+     - Visiting **`agent.*`** opens Tab 2 (**`24/7 FAQ & Booking Agent`**) by default.
+
+---
+
 ## Complete User Guide: All 3 Tabs & Every Function Explained
 
 GrowPilot is organized into **three focused tabs** in the top navigation bar (plus a quick-switch button on the far right to jump between the GTM Pipeline and the 24/7 Agent, and a live telemetry bar showing total requests, cache hits, total spend, and dollars saved vs. frontier models).
@@ -267,182 +460,6 @@ Shows a side-by-side comparison of a **Typical Bloated Prompt (`1,180 Tokens` �
 
 ---
 
-## Step-by-Step Local Setup & Installation
-
-You can run GrowPilot locally on **Ubuntu 24.04 LTS**, **macOS**, or **Windows (WSL2)** either directly with Node.js or inside Docker containers alongside local **Ollama** and **n8n**.
-
-### Prerequisites
-
-- **Node.js 20 or 22+** (`node -v`) and **npm** (`npm -v`)
-- **Git** (`git --version`)
-- *(Optional)* **Docker & Docker Compose** (`docker compose version`) if you want to run the containerized `growpilot-agent` + `ollama` + `n8n` stack.
-
----
-
-### Option A: Run Directly with Node.js (Fastest Local Setup)
-
-#### Step 1: Clone the repository and enter the project folder
-
-```bash
-git clone https://github.com/Mayamoho/GrowPilot.git
-cd GrowPilot
-```
-
-*(If you already cloned the repository earlier, run `git pull origin main` inside `~/Documents/GrowPilot` so you have the latest `package.json`, `.npmrc`, `Dockerfile`, and `docker-compose.yml`).*
-
-#### Step 2: Install dependencies
-
-```bash
-npm install --legacy-peer-deps
-```
-
-> **Note:** The repository includes an `.npmrc` file with `legacy-peer-deps=true` and pins `esbuild` to `^0.28.0` to match `vite@8.3.x`. Passing `--legacy-peer-deps` guarantees a clean install across all npm versions.
-
-#### Step 3: Run the unit test suite
-
-```bash
-npm test
-```
-
-All 10 pure-logic unit tests in `src/utils/agentEngine.test.ts` run in under half a second with no API key or internet connection required:
-
-```text
-✔ stripHtmlAndBoilerplate removes scripts, styles, nav, footer and saves tokens
-✔ matchFaqCache hits Layer 0 zero-token cache for FAQ questions and bypasses qualification messages
-✔ calculateRunCost returns $0.00 for Layer 0 cache hits and Ollama local models
-✔ evaluateIcpFit scores high-fit leads above threshold and skips low-fit leads
-✔ verifyGroundedness 5-layer gate passes truthful claims and catches fabricated numbers
-✔ trimConversationWindow caps memory at 6 messages and reports saved tokens
-✔ formatGtmLeadsCsv exports company name, industry, and ICP match score properly
-✔ calculateRunCost bills nothing when no model was actually called
-✔ nextAvailableSlot returns a future weekday slot instead of a fixed date string
-✔ isPrivateOrLoopbackIp blocks metadata, private and link-local addresses
-ℹ tests 10 | pass 10 | fail 0
-```
-
-#### Step 4: (Optional) Add a free Gemini API key
-
-GrowPilot's HTML stripper, Layer 0 FAQ cache, ICP scorer, 5-layer groundedness verifier, CSV exporter, and deterministic fallback engine all work **100% offline with no API key**.
-
-If you want live cloud generation from `gemini-3.1-flash-lite`, `gemini-3.5-flash`, or real-time voice calls via `gemini-3.1-flash-live-preview`:
-
-```bash
-cp .env.example .env
-```
-
-Open `.env` and paste a free API key from [Google AI Studio (`aistudio.google.com/apikey`)](https://aistudio.google.com/apikey):
-
-```dotenv
-GEMINI_API_KEY="AIzaSyYourKeyHere"
-PORT=3000
-OLLAMA_MODEL="llama3.2:3b"
-OLLAMA_BASE_URL="http://127.0.0.1:11434"
-N8N_WEBHOOK_URL="http://127.0.0.1:5678/webhook/growpilot-lead"
-GEMINI_MAX_ATTEMPTS="4"
-GEMINI_QUOTA_FALLBACK="1"
-```
-
-> `GEMINI_API_KEY` is the only value the AI paths truly require. Everything else has a working default.
-
-**What happens when a model tier says no** (observed on a real free-tier key, not hypothetical):
-
-| Response | GrowPilot's behaviour |
-|---|---|
-| `503 high demand`, `429 rate limit` | Retries with exponential backoff capped at 12s plus jitter, up to `GEMINI_MAX_ATTEMPTS` tries. |
-| `429 exceeded your current quota / check your plan and billing` | Permanent for that tier. GrowPilot re-answers with `gemini-3.1-flash-lite`, bills the run at the tier that actually replied, and writes `gemini-3.5-flash is out of quota for this key; copy was generated and billed by gemini-3.1-flash-lite.` into the run's audit strip. |
-| Any other failure | Deterministic template, labelled `Deterministic template (no model billed)` with `$0.00` and `modelCalled: false`. Never a silent lie. |
-
-That degrade is this project's own thesis — route to the smallest model that answers — so it is on by default. Set `GEMINI_QUOTA_FALLBACK=""` (or `0`) to make a quota-blocked tier surface the error instead of quietly re-billing a cheaper model.
-
-#### Step 5: Start the full-stack server on Port 3000
-
-```bash
-npm run dev
-```
-
-Open **[http://localhost:3000](http://localhost:3000)** in your browser.
-
----
-
-### Option B: Run on Ubuntu 24.04 with Docker Compose (Agent + Local Ollama + n8n)
-
-If you want to self-host the entire stack in background containers — including the GrowPilot full-stack server (`:3000`), a local **Ollama** server running `llama3.2:3b` for `$0.00/token` (`:11434`), and self-hosted **n8n** (`:5678`) — use the root `docker-compose.yml`:
-
-```bash
-# 1. Make sure you are inside the GrowPilot project folder and have the latest files
-cd ~/Documents/GrowPilot
-git pull origin main
-
-# 2. Confirm docker-compose.yml and Dockerfile are present
-ls -la docker-compose.yml Dockerfile
-
-# 3. Build and start all three containers in the background
-docker compose up -d --build
-
-# 4. Check that all containers are running
-docker compose ps
-```
-
-| Service | Local URL | Purpose |
-|---|---|---|
-| `growpilot-agent` | `http://localhost:3000` | GrowPilot web app, Express REST API (`/api/*`), and `/live` voice WebSocket server |
-| `growpilot-n8n` | `http://localhost:5678` | Self-hosted n8n workflow automation engine |
-| `growpilot-ollama` | `http://localhost:11434` | Local open-source LLM (`llama3.2:3b`) for zero-cost local inference |
-
-To view live container logs or stop the stack:
-
-```bash
-docker compose logs -f growpilot-agent
-docker compose down
-```
-
----
-
-## Automation Contract: What GrowPilot Actually Sends
-
-GrowPilot is the **agent**; n8n is the **arm that reaches your spreadsheet, calendar and WhatsApp**. The server POSTs to `N8N_WEBHOOK_URL` whenever something worth acting on happens. Build one workflow with a *Webhook (POST)* trigger at path `growpilot-lead` and everything below lands in it.
-
-| Event | Fires when | Payload keys |
-|---|---|---|
-| `lead.qualified` | A chat or voice caller shares a budget and is scored `HOT_BOOKED` / `WARM_NURTURE` | `lead_name`, `business_type`, `channel`, `need_summary`, `extracted_budget_usd`, `lead_score`, `intent`, `booked_slot`, `tokens_used`, `cost_usd` |
-| `gtm.lead_generated` | A scraped prospect clears the ICP gate and outbound copy is produced | same shape, with `lead_score` = `QUALIFIED_OUTBOUND` and `channel` = `GTM Outbound` |
-
-Both calls carry HTTP Basic auth when `N8N_USER` / `N8N_PASSWORD` are set, time out after 6s, and **never fail the user-facing request** — a down automation must not break a customer's chat. Instead the truth is shown in the UI and in `GET /api/state` under `automation`:
-
-- `delivered` — n8n accepted the lead
-- `failed` — it was configured but rejected or was unreachable
-- `not_configured` — `N8N_WEBHOOK_URL` is empty, so nothing left the server
-
-`GET /api/state` also reports `engine`: whether a `GEMINI_API_KEY` is present, the resolved Ollama base URL, and the live voice model ID.
-
-**Booking slots** are computed by `nextAvailableSlot()` — the next free 30-minute weekday slot in BDT business hours, advancing past booked capacity. Nothing queries a real Google Calendar; to make the slot a real calendar event, add a *Google Calendar* node downstream of the webhook in n8n.
-
-**Persistence**: FAQ rules, CRM bookings, GTM records and the telemetry ledger are written to `.data/growpilot-state.json` (Docker: the `growpilot_data` volume at `/data`) and restored on boot, so captured leads survive a restart. The static Vercel deployment has no server, so it runs the same engine in the browser with an in-memory cache only.
-
-**Security note on the scraper**: `/api/gtm/analyze` fetches user-supplied URLs. It rejects non-HTTP(S) schemes, resolves the hostname and refuses any address in loopback, RFC1918, link-local (including the `169.254.169.254` cloud metadata range), CGNAT or IPv6 unique-local space, follows redirects manually with the same check on every hop, and caps the response at 400 KB. Without this, the endpoint was an open proxy into the Docker network — `n8n:5678` sits on that network.
-
----
-
-## Deploying on Vercel & Linking Subdomains
-
-GrowPilot works both when connected to the Node/Docker Express server **and** when deployed as a static app on Vercel (when `/api/*` is not present on a static host, `src/App.tsx` automatically executes the same `agentEngine` functions directly in the browser).
-
-> Static deployment is a genuine demo of the deterministic engine, not the full agent: no model is billed, no prospect URL is fetched, no n8n webhook fires, and the live-voice tab cannot connect (it needs the server's `/live` WebSocket). See [What the Vercel URLs are — and what they are not](#-what-the-vercel-urls-are--and-what-they-are-not).
-
-1. Push your repository to GitHub.
-2. Import the repository into **[Vercel](https://vercel.com/new)** with:
-   - **Framework Preset:** `Vite`
-   - **Build Command:** `npm run build`
-   - **Output Directory:** `dist`
-   - **Install Command:** `npm install --legacy-peer-deps`
-3. **Linking the `gtm` and `agent` subdomains:**
-   - In your Vercel project, go to **Settings → Domains** and add your two subdomains (for example, `gtm.yourdomain.com` and `agent.yourdomain.com`), then add the matching `CNAME` records (`cname.vercel-dns.com`) in your DNS provider.
-   - Because `src/App.tsx` inspects `window.location.hostname` automatically:
-     - Visiting **`gtm.*`** opens Tab 1 (**`GTM Pipeline`**) by default.
-     - Visiting **`agent.*`** opens Tab 2 (**`24/7 FAQ & Booking Agent`**) by default.
-
----
-
 ## Troubleshooting Common Terminal Errors
 
 | Error Message | Why It Happens & How to Fix It |
@@ -450,4 +467,7 @@ GrowPilot works both when connected to the Node/Docker Express server **and** wh
 | `npm error code ERESOLVE` (`While resolving: vite@8.3.4 ... Found: esbuild@0.25.12`) | Your local folder still has the older `package.json` or `Dockerfile` before `esbuild` was updated to `^0.28.0`. Push/pull the latest `package.json`, `.npmrc`, and `Dockerfile` (`git pull origin main`), then run `npm install --legacy-peer-deps`. |
 | `sh: 1: tsx: not found` when running `npm run dev` | `tsx` wasn't installed because `npm install` exited early on the previous step. Run `npm install --legacy-peer-deps` first, let it finish, and then run `npm run dev`. |
 | `no configuration file provided: not found` when running `docker compose up -d` | Either your terminal is not inside the `GrowPilot` folder or `docker-compose.yml` hasn't been pulled yet. Run `cd ~/Documents/GrowPilot && git pull origin main && ls -la docker-compose.yml`, then run `docker compose up -d --build`. |
-| `docker compose up -d --build` fails at `RUN npm install` (`exit code: 1`) | Make sure your local `Dockerfile` has `RUN npm install --legacy-peer-deps` on line 9 and your `package.json` has `"esbuild": "^0.28.0"`. Run `git pull origin main`, then re-run `docker compose up -d --build`. |
+| `docker compose up -d --build` fails at `RUN npm install` (`exit code: 1`) | Your local `package.json` / `.npmrc` predate the current dependency handling. Run `git pull origin main` and re-run `docker compose up -d --build`. If it still fails, delete the build cache for that layer first: `docker compose build --no-cache growpilot-agent`. |
+| `[6/6] RUN npm run build` → `Cannot find native binding` / `@rolldown/binding-linux-x64-musl` | The image was built on Alpine (musl) while `package-lock.json` came from a glibc host, so rolldown's native binary was never installed. Fixed by the current `Dockerfile` (`node:22-slim`, no host lockfile copied) and the new `.dockerignore` — `git pull origin main`, then re-run the build. Full detail: [Port and build collisions](#port-and-build-collisions-you-may-hit-on-a-machine-that-already-runs-other-stacks). |
+| `[n8n] webhook delivery failed: n8n responded 404: The requested webhook "POST growpilot-lead" is not registered` | The workflow exists but is **not active** (n8n only registers production webhooks for active workflows), or the path/URL doesn't match. Activate the workflow's top-right toggle and use the Production URL `/webhook/growpilot-lead`, not `/webhook-test/…`. See [Automation Contract](#automation-contract-what-growpilot-actually-sends). |
+

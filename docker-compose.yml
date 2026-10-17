@@ -45,11 +45,15 @@ services:
     container_name: growpilot-n8n
     restart: unless-stopped
     ports:
-      - "5678:5678"
+      # Host port is configurable because 5678 is n8n's own default and is often already
+      # taken by another stack on the machine. Inside this network the container still
+      # listens on 5678, so the agent's default N8N_WEBHOOK_URL (http://n8n:5678/...) is
+      # unaffected — only the browser URL changes.
+      - "${N8N_HOST_PORT:-5680}:5678"
     environment:
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
-      - WEBHOOK_URL=http://localhost:5678/
+      - WEBHOOK_URL=http://localhost:${N8N_HOST_PORT:-5680}/
       - GENERIC_TIMEZONE=Asia/Dhaka
     volumes:
       - n8n_data:/home/node/.n8n

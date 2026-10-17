@@ -283,11 +283,27 @@ async function dispatchToN8n(
       signal: controller.signal,
     });
 
+    // n8n answers an unregistered path with 404 plus the actually actionable sentence
+    // ("The workflow must be active…"), so carry that text into the log and the UI instead
+    // of leaving the operator with a bare status code to guess at.
+    let errorText: string | undefined = `n8n responded ${res.status}`;
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      let reasoned = '';
+      try {
+        const parsed = JSON.parse(body) as { message?: string; hint?: string };
+        reasoned = [parsed.message, parsed.hint].filter(Boolean).join(' — ');
+      } catch {
+        reasoned = body.trim().slice(0, 200);
+      }
+      if (reasoned) errorText = `n8n responded ${res.status}: ${reasoned}`;
+    }
+
     const delivery: WebhookDelivery = {
       configured: true,
       delivered: res.ok,
       statusCode: res.status,
-      error: res.ok ? undefined : `n8n responded ${res.status}`,
+      error: res.ok ? undefined : errorText,
       attemptedAt,
     };
     webhookLedger.last = delivery;
