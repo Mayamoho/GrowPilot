@@ -4,7 +4,11 @@ import {
   type GtmPipelineRecord,
   type GtmProspectPreset,
 } from '../data/seedData';
-import { MODEL_TIERS, type ModelTierId } from '../utils/agentEngine';
+import {
+  MODEL_TIERS,
+  formatGtmLeadsCsv,
+  type ModelTierId,
+} from '../utils/agentEngine';
 import {
   Play,
   RotateCcw,
@@ -102,41 +106,6 @@ export const GtmStudioView: React.FC<GtmStudioViewProps> = ({
     setTimeout(() => setCopiedField(null), 1800);
   };
 
-  const handleDownloadCsv = () => {
-    const headers = [
-      'Company Name',
-      'URL',
-      'Industry',
-      'ICP Score',
-      'Status',
-      'Tokens Saved %',
-      'Model Used',
-      'Cache Hit',
-      'Cost USD',
-      'Cold Email Subject',
-    ];
-    const rows = records.map((r) => [
-      `"${r.companyName.replace(/"/g, '""')}"`,
-      `"${r.sourceUrl}"`,
-      `"${r.industry.replace(/"/g, '""')}"`,
-      r.icpScore,
-      r.qualificationStatus,
-      `${r.tokensSavedPct}%`,
-      `"${r.costMetrics.modelLabel}"`,
-      r.costMetrics.cacheHit ? 'YES' : 'NO',
-      r.costMetrics.estimatedCostUsd,
-      `"${r.generatedAssets.coldEmailSubject.replace(/"/g, '""')}"`,
-    ]);
-    const csv = [headers.join(','), ...rows.map((row) => row.join(','))].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'growpilot_gtm_leads.csv';
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-
   const filteredRecords = records.filter((rec) => {
     const matchesStatus =
       crmFilter === 'ALL' || rec.qualificationStatus === crmFilter;
@@ -146,6 +115,35 @@ export const GtmStudioView: React.FC<GtmStudioViewProps> = ({
       rec.industry.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesStatus && matchesSearch;
   });
+
+  const handleDownloadCsv = () => {
+    const rowsToExport = filteredRecords.length > 0 ? filteredRecords : records;
+    const csv = formatGtmLeadsCsv(
+      rowsToExport.map((r) => ({
+        companyName: r.companyName,
+        industry: r.industry,
+        icpScore: r.icpScore,
+        qualificationStatus: r.qualificationStatus,
+        sourceUrl: r.sourceUrl,
+        tokensSavedPct: r.tokensSavedPct,
+        modelLabel: r.costMetrics.modelLabel,
+        cacheHit: r.costMetrics.cacheHit,
+        estimatedCostUsd: r.costMetrics.estimatedCostUsd,
+        summary: r.summary,
+        coldEmailSubject: r.generatedAssets.coldEmailSubject,
+      }))
+    );
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'growpilot_gtm_leads.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+    setCacheNotice(
+      `Exported ${rowsToExport.length} analyzed lead(s) to growpilot_gtm_leads.csv (Company Name, Industry, ICP Match Score).`
+    );
+  };
 
   return (
     <div className="space-y-8">
@@ -178,10 +176,10 @@ export const GtmStudioView: React.FC<GtmStudioViewProps> = ({
           <button
             type="button"
             onClick={handleDownloadCsv}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-teal-700 rounded-lg hover:bg-teal-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
-            Export CRM CSV
+            Download CSV
           </button>
         </div>
       </div>

@@ -8,6 +8,7 @@ import {
   evaluateIcpFit,
   verifyGroundedness,
   trimConversationWindow,
+  formatGtmLeadsCsv,
   type FaqItem,
 } from './agentEngine.ts';
 
@@ -47,12 +48,10 @@ test('matchFaqCache hits Layer 0 zero-token cache for FAQ questions and bypasses
     },
   ];
 
-  // Exact/Keyword FAQ match -> Cache Hit
   const hit = matchFaqCache('Hi, what is your monthly pricing and cost for the package?', sampleFaqs);
   assert.equal(hit.matched, true);
   assert.equal(hit.faq?.id, 'faq-pricing');
 
-  // Lead qualification message with budget -> Bypasses static FAQ cache so agent can score & book
   const qualifyMsg = matchFaqCache(
     'We run a dental clinic and our budget is $1200 per month to book patients',
     sampleFaqs
@@ -138,4 +137,29 @@ test('trimConversationWindow caps memory at 6 messages and reports saved tokens'
   assert.equal(res.trimmed.length, 6);
   assert.equal(res.droppedCount, 4);
   assert.equal(res.tokensSavedEstimate > 0, true);
+});
+
+test('formatGtmLeadsCsv exports company name, industry, and ICP match score properly', () => {
+  const csv = formatGtmLeadsCsv([
+    {
+      companyName: 'DentaCare Aesthetic & Implant Center Dhaka',
+      industry: 'Healthcare & Dental Clinic',
+      icpScore: 96,
+      qualificationStatus: 'QUALIFIED_OUTBOUND',
+      sourceUrl: 'https://dentacare-dhaka.example.com',
+      tokensSavedPct: 37.6,
+      modelLabel: 'Gemini 3.8 Flash',
+      cacheHit: false,
+      estimatedCostUsd: 0.000185,
+      summary: '12-chair specialist clinic in Dhaka.',
+      coldEmailSubject: 'Fixing after-8 PM WhatsApp bookings',
+    },
+  ]);
+
+  const lines = csv.split('\n');
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0].includes('Company Name,Industry,ICP Match Score'), true);
+  assert.equal(lines[1].includes('"DentaCare Aesthetic & Implant Center Dhaka"'), true);
+  assert.equal(lines[1].includes('"Healthcare & Dental Clinic"'), true);
+  assert.equal(lines[1].includes(',96,'), true);
 });

@@ -512,3 +512,64 @@ export function trimConversationWindow(
 
   return { trimmed, droppedCount, tokensSavedEstimate };
 }
+
+export interface GtmCsvExportRow {
+  companyName: string;
+  industry: string;
+  icpScore: number;
+  qualificationStatus: string;
+  sourceUrl: string;
+  tokensSavedPct: number;
+  modelLabel: string;
+  cacheHit: boolean;
+  estimatedCostUsd: number;
+  summary: string;
+  coldEmailSubject: string;
+}
+
+function escapeCsvCell(value: string | number | boolean): string {
+  const str = String(value ?? '').replace(/\r?\n/g, ' ');
+  if (/[",]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return `"${str}"`;
+}
+
+/**
+ * Formats analyzed GTM lead records into an RFC-4180 CSV string including
+ * Company Name, Industry, AI-generated ICP Match Score, status, and token telemetry.
+ */
+export function formatGtmLeadsCsv(rows: GtmCsvExportRow[]): string {
+  const headers = [
+    'Company Name',
+    'Industry',
+    'ICP Match Score',
+    'Qualification Status',
+    'Source URL',
+    'Tokens Saved %',
+    'Model Used',
+    'Cache Hit',
+    'Cost USD',
+    'Executive Summary',
+    'Cold Email Subject',
+  ];
+
+  const lines = rows.map((r) =>
+    [
+      escapeCsvCell(r.companyName),
+      escapeCsvCell(r.industry),
+      r.icpScore,
+      escapeCsvCell(r.qualificationStatus),
+      escapeCsvCell(r.sourceUrl),
+      `${r.tokensSavedPct}%`,
+      escapeCsvCell(r.modelLabel),
+      r.cacheHit ? 'YES' : 'NO',
+      r.estimatedCostUsd.toFixed(6),
+      escapeCsvCell(r.summary),
+      escapeCsvCell(r.coldEmailSubject),
+    ].join(',')
+  );
+
+  return [headers.join(','), ...lines].join('\n');
+}
+
