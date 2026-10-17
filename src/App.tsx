@@ -8,7 +8,6 @@ import { TopNav, type ActiveTabId } from './components/TopNav';
 import { GtmStudioView } from './components/GtmStudioView';
 import { WhatsappAgentView, type AgentTrace } from './components/WhatsappAgentView';
 import { CostBenchmarkView } from './components/CostBenchmarkView';
-import { DeploymentHubView } from './components/DeploymentHubView';
 import {
   INITIAL_FAQS,
   INITIAL_GTM_RECORDS,
@@ -45,8 +44,7 @@ function getInitialTabFromHostnameAndUrl(): ActiveTabId {
   if (
     tabParam === 'gtm-studio' ||
     tabParam === 'whatsapp-agent' ||
-    tabParam === 'cost-lab' ||
-    tabParam === 'ubuntu-deploy'
+    tabParam === 'cost-lab'
   ) {
     return tabParam;
   }
@@ -599,7 +597,6 @@ export default function App() {
       <TopNav
         activeTab={activeTab}
         onSelectTab={setActiveTab}
-        onExportKitClick={() => setActiveTab('ubuntu-deploy')}
       />
 
       {/* Minimal Live Engine Telemetry Strip */}
@@ -654,13 +651,12 @@ export default function App() {
         <div
           role="tablist"
           aria-label="Mobile Workspace Switcher"
-          className="grid grid-cols-2 gap-1.5 p-1.5 mb-6 bg-slate-200/70 rounded-xl md:hidden"
+          className="grid grid-cols-3 gap-1.5 p-1.5 mb-6 bg-slate-200/70 rounded-xl md:hidden"
         >
           {[
             { id: 'gtm-studio', label: 'GTM Pipeline' },
             { id: 'whatsapp-agent', label: '24/7 FAQ Agent' },
             { id: 'cost-lab', label: 'Token & Cost Lab' },
-            { id: 'ubuntu-deploy', label: 'Architecture & Setup' },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -700,8 +696,6 @@ export default function App() {
         )}
 
         {activeTab === 'cost-lab' && <CostBenchmarkView />}
-
-        {activeTab === 'ubuntu-deploy' && <DeploymentHubView />}
       </main>
 
       {/* Clean Minimal Footer */}
@@ -727,10 +721,10 @@ export default function App() {
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab('ubuntu-deploy')}
+              onClick={() => setActiveTab('cost-lab')}
               className="hover:text-slate-900 cursor-pointer"
             >
-              Architecture &amp; Setup
+              Token &amp; Cost Lab
             </button>
           </div>
         </div>

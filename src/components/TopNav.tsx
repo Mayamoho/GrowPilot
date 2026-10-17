@@ -1,25 +1,24 @@
 import React from 'react';
 
-export type ActiveTabId = 'gtm-studio' | 'whatsapp-agent' | 'cost-lab' | 'ubuntu-deploy';
+export type ActiveTabId = 'gtm-studio' | 'whatsapp-agent' | 'cost-lab';
 
 interface TopNavProps {
   activeTab: ActiveTabId;
   onSelectTab: (tab: ActiveTabId) => void;
-  onExportKitClick: () => void;
 }
 
 const NAV_ITEMS: { id: ActiveTabId; label: string }[] = [
   { id: 'gtm-studio', label: 'GTM Pipeline' },
   { id: 'whatsapp-agent', label: '24/7 FAQ & Booking Agent' },
   { id: 'cost-lab', label: 'Token & Cost Lab' },
-  { id: 'ubuntu-deploy', label: 'Architecture & Setup' },
 ];
 
 export const TopNav: React.FC<TopNavProps> = ({
   activeTab,
   onSelectTab,
-  onExportKitClick,
 }) => {
+  const isOnAgentTab = activeTab === 'whatsapp-agent';
+
   return (
     <header className="sticky top-0 z-30 h-16 bg-white/95 backdrop-blur border-b border-slate-200 px-4 sm:px-6">
       <div className="max-w-[1360px] mx-auto h-full flex items-center justify-between gap-4">
@@ -41,7 +40,7 @@ export const TopNav: React.FC<TopNavProps> = ({
           </span>
         </a>
 
-        {/* Zone 2: Primary View Switcher */}
+        {/* Zone 2: Primary 3-Tab View Switcher */}
         <nav
           role="tablist"
           aria-label="Primary Workspace Views"
@@ -68,14 +67,16 @@ export const TopNav: React.FC<TopNavProps> = ({
           })}
         </nav>
 
-        {/* Zone 3: Single Primary Action CTA */}
+        {/* Zone 3: Quick Agent / Pipeline Action Switch */}
         <div className="flex items-center shrink-0">
           <button
             type="button"
-            onClick={onExportKitClick}
+            onClick={() =>
+              onSelectTab(isOnAgentTab ? 'gtm-studio' : 'whatsapp-agent')
+            }
             className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-teal-700 text-white hover:bg-teal-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
           >
-            Docker &amp; Setup Guide
+            {isOnAgentTab ? 'Open GTM Pipeline' : 'Open 24/7 Agent'}
           </button>
         </div>
       </div>
