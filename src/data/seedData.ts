@@ -508,14 +508,28 @@ docker compose up -d
 docker compose ps
 \`\`\`
 
-## 3. Exposing on \`abukawser.xyz\` for $0.00 via Cloudflare Tunnel
-Instead of paying for a load balancer or static IP, use your free Cloudflare account with \`abukawser.xyz\`:
-1. Open **Cloudflare Zero Trust Dashboard -> Networks -> Tunnels -> Create Tunnel**.
-2. Copy the \`CLOUDFLARE_TUNNEL_TOKEN\` into your \`.env\` file.
-3. Add two Public Hostname routes in Cloudflare:
-   - \`gtm.abukawser.xyz\` -> \`http://growpilot-agent:3000\`
-   - \`agent.abukawser.xyz\` -> \`http://n8n:5678\`
-4. Cloudflare automatically provisions edge SSL certificates and routes traffic directly to your Ubuntu 24.04 Docker containers.
+## 3. Exposing on \`abukawser.xyz\` via Your Cloudflare Tunnel (\`GrowPilot\`)
+Your Cloudflare Tunnel is already created:
+- **Tunnel Name**: \`GrowPilot\`
+- **Tunnel ID**: \`8f0db1e0-1a9b-4d7b-9bcc-bc314a1c880e\`
+- **OS / Architecture**: \`Debian / Ubuntu 24.04 (64-bit)\` or \`Docker\`
+
+### Option A: Run Directly on Ubuntu 24.04 (Matches Your Screenshot "Debian -> 64-bit")
+1. In your Ubuntu 24.04 terminal, click the **Copy** button next to **"Install cloudflared"** in your screenshot and run it to install the \`cloudflared\` package.
+2. Click the **Copy** button next to **"Install as service"** and run:
+   \`\`\`bash
+   sudo cloudflared service install eyJhIjoi...MyJ9
+   \`\`\`
+   *(Or to test manually in a terminal without installing a background service, run the 3rd box: \`cloudflared tunnel run --token eyJhIjoi...MyJ9\`)*.
+3. Look at the bottom of the Cloudflare page under **Connection Status** — once you see your Ubuntu machine connected, click **Next** (or go to the **Public Hostname** tab of the \`GrowPilot\` tunnel) and add:
+   - **Subdomain**: *(leave blank for root \`abukawser.xyz\` or enter \`gtm\` for \`gtm.abukawser.xyz\`)* | **Domain**: \`abukawser.xyz\` | **Service Type**: \`HTTP\` | **URL**: \`localhost:3000\`
+   - **Subdomain**: \`agent\` | **Domain**: \`abukawser.xyz\` | **Service Type**: \`HTTP\` | **URL**: \`localhost:5678\` (for your local n8n instance)
+
+### Option B: Run Inside Docker Compose (\`docker-compose.yml\`)
+If you prefer \`docker compose up -d\` to manage the tunnel automatically:
+1. Copy just the token string (\`eyJhIjoi...MyJ9\`) from the command in your screenshot.
+2. Paste it into your \`.env\` file as \`CLOUDFLARE_TUNNEL_TOKEN=eyJhIjoi...MyJ9\`.
+3. In the Cloudflare **Public Hostname** tab, point \`gtm.abukawser.xyz\` to \`http://growpilot-agent:3000\` and \`agent.abukawser.xyz\` to \`http://n8n:5678\`.
 `;
 
 export const GROWBIG100_APPLICATION_EMAIL = `To: saadi@growbig100.com

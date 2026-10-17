@@ -12,6 +12,43 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400..700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap" rel="stylesheet" />
+    <script>
+      (function () {
+        var NativeWS = window.WebSocket;
+        if (!NativeWS) return;
+        function PatchedWebSocket(url, protocols) {
+          if (protocols === 'vite-hmr' || (Array.isArray(protocols) && protocols.indexOf('vite-hmr') !== -1)) {
+            var target = new EventTarget();
+            target.url = String(url || '');
+            target.protocol = 'vite-hmr';
+            target.readyState = 1;
+            target.CONNECTING = 0;
+            target.OPEN = 1;
+            target.CLOSING = 2;
+            target.CLOSED = 3;
+            target.send = function () {};
+            target.close = function () {
+              target.readyState = 3;
+            };
+            setTimeout(function () {
+              try {
+                target.dispatchEvent(
+                  new MessageEvent('message', { data: JSON.stringify({ type: 'connected' }) })
+                );
+              } catch (_e) {}
+            }, 0);
+            return target;
+          }
+          return protocols !== undefined ? new NativeWS(url, protocols) : new NativeWS(url);
+        }
+        PatchedWebSocket.prototype = NativeWS.prototype;
+        PatchedWebSocket.CONNECTING = NativeWS.CONNECTING;
+        PatchedWebSocket.OPEN = NativeWS.OPEN;
+        PatchedWebSocket.CLOSING = NativeWS.CLOSING;
+        PatchedWebSocket.CLOSED = NativeWS.CLOSED;
+        window.WebSocket = PatchedWebSocket;
+      })();
+    </script>
   </head>
   <body class="bg-[#F8FAFC] text-[#0F172A] antialiased selection:bg-teal-600 selection:text-white">
     <div id="root"></div>
