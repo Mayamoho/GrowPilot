@@ -763,6 +763,15 @@ export const GtmStudioView: React.FC<GtmStudioViewProps> = ({
                 </button>
               ))}
             </div>
+
+            <button
+              type="button"
+              onClick={handleDownloadCsv}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-teal-800 bg-teal-50 border border-teal-300 rounded-lg hover:bg-teal-100 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Download CSV
+            </button>
           </div>
         </div>
 

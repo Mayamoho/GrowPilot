@@ -767,6 +767,7 @@ async function startServer() {
 
   // 6. Real-Time Voice Agent WebSocket Server (`gemini-3.8-live`) on `/live`
   const wss = new WebSocketServer({ noServer: true });
+  const viteHmrWss = new WebSocketServer({ noServer: true });
 
   httpServer.on('upgrade', (request, socket, head) => {
     const pathname = new URL(request.url || '/', 'http://localhost:3000').pathname;
@@ -775,7 +776,10 @@ async function startServer() {
         wss.emit('connection', ws, request);
       });
     } else {
-      socket.destroy();
+      viteHmrWss.handleUpgrade(request, socket, head, (ws) => {
+        ws.send(JSON.stringify({ type: 'connected' }));
+        ws.on('error', () => {});
+      });
     }
   });
 
