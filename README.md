@@ -141,11 +141,35 @@ npm run dev
 
 Open **[http://localhost:3000](http://localhost:3000)** in your browser.
 
+#### Step 6: Download the local model — required before the `$0.00` tier does anything
+
+Neither `npm run dev` nor `docker compose up` downloads a model. Ollama starts as an **empty** server, and if no model is present the `Model: Ollama Llama 3.2 3B ($0.00)` path cannot answer, so GrowPilot reports `deterministic-fallback` with the note `Local Ollama at http://127.0.0.1:11434 did not answer`. That message is the tell — pull the model and the same run becomes a real local generation.
+
+```bash
+# If Ollama is installed on your machine (host):
+ollama pull llama3.2:3b        # ~2.0 GB, one time
+```
+
+```bash
+# If you are using the container from Option B instead:
+docker compose up -d ollama
+docker compose exec ollama ollama pull llama3.2:3b
+```
+
+Verify it actually landed before choosing that tier in the UI:
+
+```bash
+curl -s http://127.0.0.1:11434/api/tags | python3 -c "import json,sys;print([m['name'] for m in json.load(sys.stdin)['models']])"
+# → ['llama3.2:3b']     (an empty list [] means the pull has not finished)
+```
+
+`OLLAMA_MODEL` in `.env` must match the name `ollama list` shows (`llama3.2:3b`, or `llama3.1:8b` if you pull a bigger one). A **CPU-only laptop runs the 3B model fine** — it is slower than the cloud tiers, which is the trade for `$0.00/token`. If your host already runs Ollama on `:11434`, `docker compose up` will fail to bind that port for the container; either skip the container (`docker compose up -d growpilot-agent n8n`) or move it with `OLLAMA_HOST_PORT=11500`.
+
 ---
 
 ### Option B: Run on Ubuntu 24.04 with Docker Compose (Agent + Local Ollama + n8n)
 
-If you want to self-host the entire stack in background containers — including the GrowPilot full-stack server (`:3000`), a local **Ollama** server running `llama3.2:3b` for `$0.00/token` (`:11434`), and self-hosted **n8n** (host port `5680` by default, because `5678` is n8n's own default and is already taken on most machines that have run n8n before) — use the root `docker-compose.yml`:
+If you want to self-host the entire stack in background containers — including the GrowPilot full-stack server (`:3000`), an **Ollama** server for `$0.00/token` inference (`:11434`, model still needs pulling — see [Step 6](#step-6-download-the-local-model--required-before-the-000-tier-does-anything)), and self-hosted **n8n** (host port `5680` by default, because `5678` is n8n's own default and is already taken on most machines that have run n8n before) — use the root `docker-compose.yml`:
 
 ```bash
 # 1. Make sure you are inside the GrowPilot project folder and have the latest files
