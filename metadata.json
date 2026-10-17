@@ -1,0 +1,6 @@
+{
+  "name": "GrowPilot — GTM Engineering & Cached AI Agent Suite",
+  "description": "Cost-optimized GTM outbound pipeline, zero-token cached 24/7 WhatsApp & FAQ lead qualification agent, and Ubuntu 24.04 Docker + n8n deployment suite built for abukawser.xyz.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
