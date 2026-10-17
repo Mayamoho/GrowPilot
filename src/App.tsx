@@ -62,7 +62,7 @@ function buildClientSideGroundedAssets(params: {
   industry: string;
   icpScore: number;
 }) {
-  const sentences = params.cleanedText
+    const sentences = params.cleanedText
     .split(/(?<=[.!?])\s+/)
     .map((s) => s.trim())
     .filter((s) => s.length > 20);
@@ -71,20 +71,21 @@ function buildClientSideGroundedAssets(params: {
     sentences.slice(0, 2).join(' ') ||
     `${params.companyName} operates in ${params.industry} and provides customer-facing services with automation opportunities.`;
 
-  const keyFacts = sentences.slice(0, 4);
-  while (keyFacts.length < 3) {
-    keyFacts.push(`Verified prospect entity: ${params.companyName} (${params.industry})`);
+  const extractedFacts = sentences.slice(0, 4);
+  while (extractedFacts.length < 3) {
+    extractedFacts.push(`Verified prospect entity: ${params.companyName} (${params.industry})`);
   }
 
-  const firstFact = keyFacts[0] || summary;
+  const firstFact = extractedFacts[0] || summary;
 
   return {
     summary,
-    keyFacts,
+    extractedFacts,
     coldEmailSubject: `Automating 24/7 lead capture & workflows for ${params.companyName}`,
-    coldEmailBody: `Hi ${params.companyName} team,\n\nI reviewed your operations in ${params.industry} — specifically noting: "${firstFact}".\n\nAt Growbig100, we deploy cached 24/7 WhatsApp & web qualification agents connected to n8n and Google Sheets CRM so after-hours inquiries are answered and booked automatically in under 3 seconds.\n\nWould you be open to a 10-minute walkthrough this week?\n\nBest,\nAbu Kawser\nAI Automation & GTM Engineering`,
-    whatsappScript: `Assalamu Alaikum ${params.companyName} team! Saw your ${params.industry} services ("${firstFact.slice(0, 85)}..."). We built a 24/7 WhatsApp + n8n booking agent that qualifies leads and logs to Google Sheets at near-zero token cost. Want a 60-sec live demo link?`,
-    socialPost: `How GTM Engineering + Smallest-Model Routing cuts outbound AI costs by 90%:\n\nWhile analyzing ${params.companyName} (${params.industry}, ICP Score ${params.icpScore}/100), our GrowPilot pipeline stripped HTML boilerplate before inference, verified every claim through a 5-layer groundedness gate, and generated multi-channel outbound copy in one pass.\n\n#AIAutomation #GTMEngineering #n8n #Docker #Growbig100`,
+    coldEmailBody: `Hi ${params.companyName} team,\n\nI reviewed your operations in ${params.industry} — specifically noting: "${firstFact}".\n\nWe deploy cached 24/7 WhatsApp & web qualification agents connected to n8n and Google Sheets CRM so after-hours inquiries are answered and booked automatically in under 3 seconds.\n\nWould you be open to a 10-minute walkthrough this week?\n\nBest,\nGrowPilot Automation Team`,
+    whatsappOpener: `Hello ${params.companyName} team! Saw your ${params.industry} services ("${firstFact.slice(0, 85)}..."). We built a 24/7 WhatsApp + n8n booking agent that qualifies leads and logs to Google Sheets at near-zero token cost. Want a 60-sec live demo link?`,
+    followUpMessage: `Hi ${params.companyName} team — following up in case 24/7 WhatsApp and CRM lead automation is a priority this quarter. Happy to share a 60-second sandbox link.`,
+    socialMediaPost: `How GTM Engineering + Smallest-Model Routing cuts outbound AI costs by 90%:\n\nWhile analyzing ${params.companyName} (${params.industry}, ICP Score ${params.icpScore}/100), our GrowPilot pipeline stripped HTML boilerplate before inference, verified every claim through a 5-layer groundedness gate, and generated multi-channel outbound copy in one pass.`,
   };
 }
 
@@ -144,17 +145,18 @@ export default function App() {
     if (!payload.bypassCache && clientGtmCache[cacheKey]) {
       const cached = clientGtmCache[cacheKey];
       const cachedMetrics = calculateRunCost({
-        modelId: payload.modelPreference,
-        inputTokens: cached.cleanedTokenEstimate,
-        outputTokens: 165,
+        modelUsed: payload.modelPreference,
         cacheHit: true,
-        cachedLatencyMs: 3,
+        inputTokens: cached.cleanedEstimatedTokens,
+        outputTokens: 165,
+        rawUnstrippedInputTokens: cached.rawEstimatedTokens,
+        latencyMs: 3,
       });
       const cachedRecord: GtmPipelineRecord = {
         ...cached,
         id: `gtm-cache-${Date.now()}`,
         costMetrics: cachedMetrics,
-        createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
 
       setGtmRecords((prev) => [
@@ -170,7 +172,7 @@ export default function App() {
           cacheHitRatePct: Math.round((nextHits / nextReq) * 1000) / 10,
           totalTokensUsed: prev.totalTokensUsed,
           totalCostUsd: prev.totalCostUsd,
-          totalSavedUsd: prev.totalSavedUsd + cachedMetrics.savedVsFrontierUsd,
+          totalSavedUsd: prev.totalSavedUsd + cachedMetrics.costSavedUsd,
         };
       });
       return cachedRecord;
@@ -178,47 +180,51 @@ export default function App() {
 
     const stripped = stripHtmlAndBoilerplate(payload.rawContent || payload.companyName);
     const icpEval = evaluateIcpFit(
-      `${payload.companyName} ${payload.industry} ${stripped.cleanedText}`,
+      stripped.cleanedText,
+      payload.industry,
       payload.icpThreshold
     );
 
     if (icpEval.qualificationStatus === 'SKIPPED_LOW_ICP') {
       const lowCostMetrics = calculateRunCost({
-        modelId: 'gemini-3.1-flash-lite',
-        inputTokens: Math.min(80, stripped.cleanedTokens),
-        outputTokens: 18,
+        modelUsed: 'gemini-3.1-flash-lite',
         cacheHit: false,
+        inputTokens: Math.min(80, stripped.cleanedEstimatedTokens),
+        outputTokens: 18,
+        rawUnstrippedInputTokens: stripped.rawEstimatedTokens,
       });
       const skippedRecord: GtmPipelineRecord = {
         id: `gtm-skip-${Date.now()}`,
         companyName: payload.companyName,
         sourceUrl: payload.sourceUrl || 'https://example.com',
         industry: payload.industry || 'General',
-        rawCharCount: stripped.rawChars,
-        cleanedCharCount: stripped.cleanedChars,
-        rawTokenEstimate: stripped.rawTokens,
-        cleanedTokenEstimate: stripped.cleanedTokens,
-        tokensSavedByStrip: stripped.tokensSaved,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        rawCharCount: stripped.rawCharCount,
+        cleanedCharCount: stripped.cleanedCharCount,
+        rawEstimatedTokens: stripped.rawEstimatedTokens,
+        cleanedEstimatedTokens: stripped.cleanedEstimatedTokens,
         tokensSavedPct: stripped.tokensSavedPct,
-        icpScore: icpEval.score,
+        icpScore: icpEval.icpScore,
         icpThreshold: payload.icpThreshold,
         qualificationStatus: 'SKIPPED_LOW_ICP',
-        icpReasons: icpEval.reasons,
-        summary: `Skipped outbound copy generation: ICP score (${icpEval.score}/100) is below the configured ${payload.icpThreshold}/100 token-saving gate.`,
-        keyFacts: icpEval.reasons,
+        icpReasoning: icpEval.reasoning,
+        matchedSignals: icpEval.matchedSignals,
+        summary: `Skipped outbound copy generation: ICP score (${icpEval.icpScore}/100) is below the configured ${payload.icpThreshold}/100 token-saving gate.`,
+        extractedFacts: [icpEval.reasoning],
         generatedAssets: {
           coldEmailSubject: '[SKIPPED BY ICP GATE — 0 GENERATION TOKENS USED]',
-          coldEmailBody: `Prospect "${payload.companyName}" scored ${icpEval.score}/100 (Threshold: ${payload.icpThreshold}/100). Generation was halted before calling ${payload.modelPreference} to prevent wasted tokens.`,
-          whatsappScript: '[SKIPPED BY ICP GATE]',
-          socialPost: '[SKIPPED BY ICP GATE]',
+          coldEmailBody: `Prospect "${payload.companyName}" scored ${icpEval.icpScore}/100 (Threshold: ${payload.icpThreshold}/100). Generation was halted before calling ${payload.modelPreference} to prevent wasted tokens.`,
+          whatsappOpener: '[SKIPPED BY ICP GATE]',
+          followUpMessage: '[SKIPPED BY ICP GATE]',
+          socialMediaPost: '[SKIPPED BY ICP GATE]',
         },
-        groundedness: verifyGroundedness(
-          stripped.cleanedText,
-          payload.companyName,
-          payload.companyName
-        ),
+        groundednessReport: verifyGroundedness({
+          sourceText: stripped.cleanedText,
+          companyName: payload.companyName,
+          extractedFacts: [],
+          generatedTexts: [payload.companyName],
+        }),
         costMetrics: lowCostMetrics,
-        createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
 
       setGtmRecords((prev) => [
@@ -232,48 +238,56 @@ export default function App() {
       companyName: payload.companyName,
       cleanedText: stripped.cleanedText,
       industry: payload.industry || 'B2B & Automation',
-      icpScore: icpEval.score,
+      icpScore: icpEval.icpScore,
     });
-    const combinedOutput = `${generated.summary}\n${generated.coldEmailBody}\n${generated.whatsappScript}\n${generated.socialPost}`;
-    const groundedness = verifyGroundedness(
-      `${payload.companyName} ${payload.industry} ${stripped.cleanedText}`,
-      combinedOutput,
-      payload.companyName
-    );
+    const groundednessReport = verifyGroundedness({
+      sourceText: stripped.cleanedText,
+      companyName: payload.companyName,
+      extractedFacts: generated.extractedFacts,
+      generatedTexts: [
+        generated.summary,
+        generated.coldEmailBody,
+        generated.whatsappOpener,
+        generated.socialMediaPost,
+      ],
+    });
+    const combinedOutput = `${generated.summary}\n${generated.coldEmailBody}\n${generated.whatsappOpener}\n${generated.socialMediaPost}`;
     const outTokens = Math.max(45, Math.ceil(combinedOutput.length / 4));
     const costMetrics = calculateRunCost({
-      modelId: payload.modelPreference,
-      inputTokens: stripped.cleanedTokens,
-      outputTokens: outTokens,
+      modelUsed: payload.modelPreference,
       cacheHit: false,
+      inputTokens: stripped.cleanedEstimatedTokens,
+      outputTokens: outTokens,
+      rawUnstrippedInputTokens: stripped.rawEstimatedTokens,
     });
 
     const record: GtmPipelineRecord = {
       id: `gtm-${Date.now()}`,
       companyName: payload.companyName,
-      sourceUrl: payload.sourceUrl || 'https://abukawser.xyz',
+      sourceUrl: payload.sourceUrl || 'https://example.com',
       industry: payload.industry || 'Digital Marketing & Automation',
-      rawCharCount: stripped.rawChars,
-      cleanedCharCount: stripped.cleanedChars,
-      rawTokenEstimate: stripped.rawTokens,
-      cleanedTokenEstimate: stripped.cleanedTokens,
-      tokensSavedByStrip: stripped.tokensSaved,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      rawCharCount: stripped.rawCharCount,
+      cleanedCharCount: stripped.cleanedCharCount,
+      rawEstimatedTokens: stripped.rawEstimatedTokens,
+      cleanedEstimatedTokens: stripped.cleanedEstimatedTokens,
       tokensSavedPct: stripped.tokensSavedPct,
-      icpScore: icpEval.score,
+      icpScore: icpEval.icpScore,
       icpThreshold: payload.icpThreshold,
       qualificationStatus: 'QUALIFIED_OUTBOUND',
-      icpReasons: icpEval.reasons,
+      icpReasoning: icpEval.reasoning,
+      matchedSignals: icpEval.matchedSignals,
       summary: generated.summary,
-      keyFacts: generated.keyFacts,
+      extractedFacts: generated.extractedFacts,
       generatedAssets: {
         coldEmailSubject: generated.coldEmailSubject,
         coldEmailBody: generated.coldEmailBody,
-        whatsappScript: generated.whatsappScript,
-        socialPost: generated.socialPost,
+        whatsappOpener: generated.whatsappOpener,
+        followUpMessage: generated.followUpMessage,
+        socialMediaPost: generated.socialMediaPost,
       },
-      groundedness,
+      groundednessReport,
       costMetrics,
-      createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
 
     setClientGtmCache((prev) => ({ ...prev, [cacheKey]: record }));
@@ -289,7 +303,7 @@ export default function App() {
         cacheHitRatePct: Math.round((prev.cacheHits / nextReq) * 1000) / 10,
         totalTokensUsed: prev.totalTokensUsed + costMetrics.totalTokens,
         totalCostUsd: prev.totalCostUsd + costMetrics.estimatedCostUsd,
-        totalSavedUsd: prev.totalSavedUsd + costMetrics.savedVsFrontierUsd,
+        totalSavedUsd: prev.totalSavedUsd + costMetrics.costSavedUsd,
       };
     });
     return record;
@@ -353,25 +367,29 @@ export default function App() {
     modelPreference: ModelTierId;
     channel: string;
   }): { reply: string; trace: AgentTrace } => {
+    const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const existingTurns = clientSessionTurns[payload.sessionId] || [];
     const updatedTurns: ChatTurn[] = [
       ...existingTurns,
-      { role: 'user', content: payload.message },
+      { role: 'user', content: payload.message, timestamp: nowTime },
     ];
     const windowResult = trimConversationWindow(updatedTurns, 6);
 
     const faqMatch = matchFaqCache(payload.message, faqs);
-    if (faqMatch.hit && faqMatch.matchedFaq) {
+    if (faqMatch.matched && faqMatch.faq) {
       const costMetrics = calculateRunCost({
-        modelId: payload.modelPreference,
-        inputTokens: Math.ceil(payload.message.length / 4),
-        outputTokens: Math.ceil(faqMatch.matchedFaq.answer.length / 4),
+        modelUsed: payload.modelPreference,
         cacheHit: true,
-        cachedLatencyMs: 2,
+        inputTokens: Math.ceil(payload.message.length / 4),
+        outputTokens: Math.ceil(faqMatch.faq.answer.length / 4),
+        latencyMs: 2,
       });
 
       const finalTurns = trimConversationWindow(
-        [...windowResult.trimmed, { role: 'agent', content: faqMatch.matchedFaq.answer }],
+        [
+          ...windowResult.trimmed,
+          { role: 'assistant', content: faqMatch.faq.answer, timestamp: nowTime },
+        ],
         6
       );
       setClientSessionTurns((prev) => ({ ...prev, [payload.sessionId]: finalTurns.trimmed }));
@@ -384,20 +402,20 @@ export default function App() {
           cacheHitRatePct: Math.round((nextHits / nextReq) * 1000) / 10,
           totalTokensUsed: prev.totalTokensUsed,
           totalCostUsd: prev.totalCostUsd,
-          totalSavedUsd: prev.totalSavedUsd + costMetrics.savedVsFrontierUsd,
+          totalSavedUsd: prev.totalSavedUsd + costMetrics.costSavedUsd,
         };
       });
 
       return {
-        reply: faqMatch.matchedFaq.answer,
+        reply: faqMatch.faq.answer,
         trace: {
-          executionPath: 'LAYER_0_EXACT_OR_SEMANTIC_CACHE',
-          cacheSimilarity: faqMatch.similarity,
-          matchedFaqCategory: faqMatch.matchedFaq.category,
-          leadIntent: 'FAQ_INQUIRY',
-          leadScore: 'FAQ_RESOLVED',
-          budgetUsd: null,
-          nextAction: 'ANSWERED_ZERO_TOKENS',
+          layerTriggered: `Layer 0 Cache Hit (${faqMatch.faq.category})`,
+          cacheKey: faqMatch.cacheKey,
+          confidence: faqMatch.confidence,
+          intent: 'FAQ_CACHE_HIT',
+          leadScore: 'COLD_FAQ',
+          budgetUsd: 0,
+          nextAction: 'SERVED_ZERO_TOKENS',
           bookedSlot: null,
           slidingWindowTurns: finalTurns.trimmed.length,
           droppedTurns: finalTurns.droppedCount,
@@ -410,7 +428,7 @@ export default function App() {
       payload.message.match(/\$\s*(\d[\d,]*)/i) ||
       payload.message.match(/(\d[\d,]*)\s*(?:usd|dollars)/i);
     const bdtMatch = payload.message.match(/(\d[\d,]*)\s*(?:bdt|taka|tk)/i);
-    let extractedBudgetUsd: number | null = null;
+    let extractedBudgetUsd = 0;
     if (usdMatch) {
       extractedBudgetUsd = parseInt(usdMatch[1].replace(/,/g, ''), 10);
     } else if (bdtMatch) {
@@ -419,26 +437,27 @@ export default function App() {
     }
 
     const isQualified =
-      (extractedBudgetUsd !== null && extractedBudgetUsd >= 300) ||
-      /book|appointment|schedule|call|clinic|saas|agency|whatsapp/i.test(payload.message);
+      extractedBudgetUsd >= 500 ||
+      (/book|appointment|schedule|call|clinic|saas|agency|whatsapp/i.test(payload.message) &&
+        extractedBudgetUsd === 0);
 
-    const bookedSlot = isQualified ? 'Thu 24 Oct, 4:30 PM BDT' : null;
-    const reply = isQualified
-      ? `Great fit! Based on your requirements${
-          extractedBudgetUsd ? ` and ~$${extractedBudgetUsd}/mo budget` : ''
-        }, I have provisionally booked a 30-minute GTM & AI Agent architecture call for **${bookedSlot}** and synced your lead record to the Growbig100 n8n CRM.`
-      : `Thanks for sharing! Could you let me know your approximate monthly automation budget (or patient/lead volume) and whether you prefer WhatsApp Business API or web chat so I can book the right discovery slot?`;
+    const effectiveBudget = extractedBudgetUsd > 0 ? extractedBudgetUsd : isQualified ? 600 : 200;
+    const bookedSlot = effectiveBudget >= 500 ? 'Thu 24 Oct, 4:30 PM' : null;
+    const reply =
+      effectiveBudget >= 500
+        ? `Great fit! Based on your requirements and ~$${effectiveBudget}/mo budget, I have booked a 30-minute discovery call for ${bookedSlot} and synced your lead record to the CRM.`
+        : `Thanks for sharing! Our full-stack 24/7 AI Agent + n8n automation package starts at $500/month. Could you share if your monthly budget aligns with this range so I can reserve a discovery call slot?`;
 
     const inputTokens = Math.max(28, Math.ceil(payload.message.length / 4) + 36);
     const outputTokens = Math.max(24, Math.ceil(reply.length / 4));
     const costMetrics = calculateRunCost({
-      modelId: payload.modelPreference,
+      modelUsed: payload.modelPreference,
+      cacheHit: false,
       inputTokens,
       outputTokens,
-      cacheHit: false,
     });
 
-    if (isQualified && bookedSlot) {
+    if (effectiveBudget >= 500 && bookedSlot) {
       const newBooking: CrmBookingRecord = {
         id: `crm-${Date.now()}`,
         leadName:
@@ -451,19 +470,19 @@ export default function App() {
         channel:
           payload.channel === 'WhatsApp Business' ? 'WhatsApp Business' : 'Website Widget',
         needSummary: payload.message.slice(0, 90),
-        monthlyBudgetUsd: extractedBudgetUsd || 550,
+        monthlyBudgetUsd: effectiveBudget,
         leadScore: 'HOT_BOOKED',
         bookedSlot,
         modelUsed: costMetrics.modelLabel,
         tokensUsed: costMetrics.totalTokens,
         costUsd: costMetrics.estimatedCostUsd,
-        createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        createdAt: nowTime,
       };
       setCrmBookings((prev) => [newBooking, ...prev]);
     }
 
     const finalTurns = trimConversationWindow(
-      [...windowResult.trimmed, { role: 'agent', content: reply }],
+      [...windowResult.trimmed, { role: 'assistant', content: reply, timestamp: nowTime }],
       6
     );
     setClientSessionTurns((prev) => ({ ...prev, [payload.sessionId]: finalTurns.trimmed }));
@@ -475,20 +494,20 @@ export default function App() {
         cacheHitRatePct: Math.round((prev.cacheHits / nextReq) * 1000) / 10,
         totalTokensUsed: prev.totalTokensUsed + costMetrics.totalTokens,
         totalCostUsd: prev.totalCostUsd + costMetrics.estimatedCostUsd,
-        totalSavedUsd: prev.totalSavedUsd + costMetrics.savedVsFrontierUsd,
+        totalSavedUsd: prev.totalSavedUsd + costMetrics.costSavedUsd,
       };
     });
 
     return {
       reply,
       trace: {
-        executionPath: 'SMALLEST_MODEL_ROUTER_LLM',
-        cacheSimilarity: faqMatch.similarity,
-        matchedFaqCategory: null,
-        leadIntent: isQualified ? 'HIGH_INTENT_BOOKING' : 'DISCOVERY_QUALIFICATION',
-        leadScore: isQualified ? 'HOT_BOOKED' : 'WARM_NURTURE',
-        budgetUsd: extractedBudgetUsd,
-        nextAction: isQualified ? 'CALENDAR_BOOKED_CRM_SYNCED' : 'ASK_QUALIFYING_BUDGET',
+        layerTriggered: `Smallest-Model Router (${costMetrics.modelLabel})`,
+        cacheKey: faqMatch.cacheKey,
+        confidence: 0.92,
+        intent: effectiveBudget >= 500 ? 'QUALIFIED_BOOKING' : 'BUDGET_NURTURE',
+        leadScore: effectiveBudget >= 500 ? 'HOT_BOOKED' : 'WARM_NURTURE',
+        budgetUsd: effectiveBudget,
+        nextAction: effectiveBudget >= 500 ? 'BOOK_CALENDAR_AND_CRM' : 'SEND_NURTURE_DOCS',
         bookedSlot,
         slidingWindowTurns: finalTurns.trimmed.length,
         droppedTurns: finalTurns.droppedCount,
@@ -583,29 +602,26 @@ export default function App() {
         onExportKitClick={() => setActiveTab('ubuntu-deploy')}
       />
 
-      {/* Contextual Telemetry & Candidate Identity Bar */}
-      <div className="bg-white border-b border-slate-200 px-6 py-2.5">
-        <div className="max-w-[1380px] mx-auto flex flex-col md:flex-row md:items-center justify-between gap-2 text-xs">
-          <div className="flex flex-wrap items-center gap-2 text-slate-600">
-            <span className="font-semibold text-slate-900">
-              Abu Kawser (abukawser.xyz)
+      {/* Minimal Live Engine Telemetry Strip */}
+      <div className="bg-white border-b border-slate-200 px-4 sm:px-6 py-2">
+        <div className="max-w-[1360px] mx-auto flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2 text-slate-600">
+            <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+            <span className="font-medium text-slate-800">
+              Layer 0 Cache &amp; Smallest-Model Router Active
             </span>
-            <span aria-hidden="true">·</span>
-            <span>Growbig100 AI Automation & GTM Engineering Work Sample</span>
-            <span aria-hidden="true">·</span>
-            <span>Ubuntu 24.04 Docker + n8n + Ollama Ready</span>
           </div>
 
           <div className="flex flex-wrap items-center gap-4 font-mono tabular-nums text-xs">
             <div>
-              <span className="text-slate-500">Queries: </span>
+              <span className="text-slate-500">Requests: </span>
               <span className="font-semibold text-slate-900">{telemetry.totalRequests}</span>
             </div>
             <span aria-hidden="true" className="text-slate-300">
               ·
             </span>
             <div>
-              <span className="text-slate-500">Layer 0 Cache Hits: </span>
+              <span className="text-slate-500">Cache Hits: </span>
               <span className="font-semibold text-teal-800">
                 {telemetry.cacheHits} ({telemetry.cacheHitRatePct}%)
               </span>
@@ -633,7 +649,7 @@ export default function App() {
       </div>
 
       {/* Main Workspace Viewport */}
-      <main className="flex-1 w-full max-w-[1380px] mx-auto px-4 sm:px-6 py-6 sm:py-7">
+      <main className="flex-1 w-full max-w-[1360px] mx-auto px-4 sm:px-6 py-6 sm:py-8">
         {/* Mobile Workspace Switcher (visible on <768px viewports) */}
         <div
           role="tablist"
@@ -641,10 +657,10 @@ export default function App() {
           className="grid grid-cols-2 gap-1.5 p-1.5 mb-6 bg-slate-200/70 rounded-xl md:hidden"
         >
           {[
-            { id: 'gtm-studio', label: '01. GTM Pipeline' },
-            { id: 'whatsapp-agent', label: '02. 24/7 FAQ Agent' },
-            { id: 'cost-lab', label: '03. Prompt & Cost' },
-            { id: 'ubuntu-deploy', label: '04. Ubuntu & n8n' },
+            { id: 'gtm-studio', label: 'GTM Pipeline' },
+            { id: 'whatsapp-agent', label: '24/7 FAQ Agent' },
+            { id: 'cost-lab', label: 'Token & Cost Lab' },
+            { id: 'ubuntu-deploy', label: 'Architecture & Setup' },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -688,11 +704,11 @@ export default function App() {
         {activeTab === 'ubuntu-deploy' && <DeploymentHubView />}
       </main>
 
-      {/* Quiet Footer */}
-      <footer className="bg-white border-t border-slate-200 px-6 py-4 mt-12">
-        <div className="max-w-[1380px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
+      {/* Clean Minimal Footer */}
+      <footer className="bg-white border-t border-slate-200 px-4 sm:px-6 py-4 mt-12">
+        <div className="max-w-[1360px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
           <div>
-            GrowPilot · Built by Abu Kawser (CSE, University of Dhaka) · Domain: abukawser.xyz
+            GrowPilot — Cost-Optimized GTM Pipeline &amp; 24/7 Cached AI Agent Suite
           </div>
           <div className="flex items-center gap-4">
             <button
@@ -707,14 +723,14 @@ export default function App() {
               onClick={() => setActiveTab('whatsapp-agent')}
               className="hover:text-slate-900 cursor-pointer"
             >
-              24/7 FAQ & Booking Agent
+              24/7 FAQ &amp; Booking Agent
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('ubuntu-deploy')}
               className="hover:text-slate-900 cursor-pointer"
             >
-              Ubuntu 24.04 Docker & n8n Kit
+              Architecture &amp; Setup
             </button>
           </div>
         </div>

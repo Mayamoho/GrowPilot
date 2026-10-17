@@ -150,11 +150,11 @@ export const GtmStudioView: React.FC<GtmStudioViewProps> = ({
       {/* Section Header */}
       <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 pb-5 border-b border-slate-200">
         <div>
-          <p className="text-xs font-medium text-slate-500">
-            01. Autonomous GTM Engineering & Content Pipeline · Lead → Enrich → Score → Personalise → CRM
+          <p className="text-xs font-semibold uppercase tracking-wider text-teal-700">
+            Autonomous GTM Engineering &amp; Content Pipeline
           </p>
           <h1 className="font-display text-2xl sm:text-3xl font-bold text-slate-900 mt-1">
-            GTM Scraper, ICP Gate & Grounded Outbound Agent
+            GTM Scraper, ICP Gate &amp; Grounded Outbound Agent
           </h1>
           <p className="text-sm text-slate-600 mt-1.5 max-w-3xl">
             Strips HTML boilerplate to cut ~80% of input tokens, scores ICP fit (0–100) before calling generation models, and verifies every cold email, WhatsApp opener, and social post through a 5-layer groundedness gate.

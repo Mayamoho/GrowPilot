@@ -1,0 +1,57 @@
+services:
+  growpilot-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: growpilot-agent
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
+      - N8N_WEBHOOK_URL=http://n8n:5678/webhook/growpilot-lead
+    depends_on:
+      - ollama
+      - n8n
+    networks:
+      - growpilot-net
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: growpilot-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    entrypoint: [ "/bin/sh", "-c", "ollama serve & sleep 5 && ollama pull ${OLLAMA_MODEL:-llama3.2:3b} && wait" ]
+    networks:
+      - growpilot-net
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: growpilot-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=Asia/Dhaka
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - growpilot-net
+
+volumes:
+  ollama_data:
+  n8n_data:
+
+networks:
+  growpilot-net:
+    driver: bridge
