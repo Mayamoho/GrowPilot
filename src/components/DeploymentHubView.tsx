@@ -18,14 +18,13 @@ const LOCAL_AND_VERCEL_SETUP_GUIDE = `# 1. Clone the repository & enter the proj
 git clone https://github.com/Mayamoho/GrowPilot.git
 cd GrowPilot
 
-# 2. Configure environment variables
+# 2. Configure environment variables (optional for offline/deterministic mode)
 cp .env.example .env
-# Edit .env and add GEMINI_API_KEY="AIzaSy..." (optional: runs with built-in engine if omitted)
 
 # ---------------------------------------------------------
 # OPTION A: Run Locally with Node.js (Port 3000)
 # ---------------------------------------------------------
-npm install
+npm install --legacy-peer-deps
 npm test
 npm run dev
 
@@ -36,16 +35,16 @@ npm run dev
 docker compose up -d --build
 docker compose ps`;
 
-const SUBDOMAIN_VERCEL_GUIDE = `# Subdomain Routing Configuration (Vercel + DNS)
-# Primary Vercel Deployment: https://growpilot-ashy.vercel.app/
+const SUBDOMAIN_VERCEL_GUIDE = `# Live Deployed Versions & Entry Points
 
-# 1. In Vercel Dashboard -> Project -> Settings -> Domains, add:
-#    - gtm.abukawser.xyz   (Automatically opens 01. GTM Pipeline)
-#    - agent.abukawser.xyz (Automatically opens 02. 24/7 FAQ & Booking Agent)
+1. https://growpilot-ashy.vercel.app/
+   Full GrowPilot suite on Vercel (all 4 modules: GTM Pipeline, 24/7 FAQ & Booking Agent, Token & Cost Lab, Architecture & Setup).
 
-# 2. In your DNS Provider (Cloudflare / Registrar) -> DNS Records, add:
-#    Type: CNAME | Name: gtm   | Target: cname.vercel-dns.com | Proxy: DNS Only
-#    Type: CNAME | Name: agent | Target: cname.vercel-dns.com | Proxy: DNS Only`;
+2. https://gtm.abukawser.xyz
+   Dedicated GTM Engineering entry point — opens directly into the Autonomous GTM Scraper, HTML Boilerplate Stripper, ICP Fit Gate, and 5-Layer Grounded Outbound Generator.
+
+3. https://agent.abukawser.xyz
+   Dedicated Customer Agent entry point — opens directly into the 24/7 Cached WhatsApp/Web FAQ & Lead Qualification Agent and Live Execution Token Inspector.`;
 
 export const DeploymentHubView: React.FC = () => {
   const [activeDocTab, setActiveDocTab] = useState<
@@ -309,7 +308,7 @@ export const DeploymentHubView: React.FC = () => {
 
             <div className="space-y-2">
               <div className="text-xs font-semibold text-slate-800">
-                Vercel Deployment &amp; Subdomain Routing (gtm / agent)
+                Live Deployed Versions (Vercel, gtm &amp; agent)
               </div>
               <pre className="p-4 bg-slate-900 text-slate-100 font-mono text-xs leading-relaxed rounded-xl overflow-x-auto">
                 {SUBDOMAIN_VERCEL_GUIDE}

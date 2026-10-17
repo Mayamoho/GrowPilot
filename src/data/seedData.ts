@@ -301,11 +301,11 @@ export const DOCKERFILE_CONTENT = `FROM node:22-alpine
 
 WORKDIR /app
 
-# Copy package manifests first for layer caching
-COPY package*.json ./
+# Copy package manifests and npm config first for layer caching
+COPY package*.json .npmrc* ./
 
-# Install dependencies
-RUN npm install
+# Install dependencies without peer resolution conflicts
+RUN npm install --legacy-peer-deps
 
 # Copy application source and server
 COPY . .
