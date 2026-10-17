@@ -63,6 +63,10 @@ const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434'
   ''
 );
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL?.trim() || '';
+// Ollama loads the model into RAM on the first call after being idle — 9s of the 21s a
+// one-sentence request took on this laptop's CPU. A 25s ceiling therefore aborted every
+// cold first run into the deterministic fallback, which is the tier local users hit most.
+const OLLAMA_TIMEOUT_MS = Math.max(5_000, Number(process.env.OLLAMA_TIMEOUT_MS || 120_000));
 const GEMINI_MAX_ATTEMPTS = Math.max(1, Number(process.env.GEMINI_MAX_ATTEMPTS || 4));
 // Unset keeps the quota degrade on. An explicit empty value (or 0/false) makes a quota-blocked
 // tier report the error instead of silently re-billing a cheaper model.
@@ -495,7 +499,7 @@ async function generateWithOllama(
   options: { json: boolean; model?: string }
 ): Promise<string | null> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 25000);
+  const timer = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS);
   try {
     const res = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
       method: 'POST',
@@ -520,7 +524,11 @@ async function generateWithOllama(
     const text = data.message?.content?.trim();
     return text || null;
   } catch (err) {
-    console.warn('[ollama] local inference unavailable:', err instanceof Error ? err.message : err);
+    const timedOut = err instanceof Error && err.name === 'AbortError';
+    console.warn(
+      `[ollama] local inference ${timedOut ? `timed out after ${OLLAMA_TIMEOUT_MS}ms` : 'unavailable'}:`,
+      err instanceof Error ? err.message : err
+    );
     return null;
   } finally {
     clearTimeout(timer);

@@ -165,6 +165,8 @@ curl -s http://127.0.0.1:11434/api/tags | python3 -c "import json,sys;print([m['
 
 `OLLAMA_MODEL` in `.env` must match the name `ollama list` shows (`llama3.2:3b`, or `llama3.1:8b` if you pull a bigger one). A **CPU-only laptop runs the 3B model fine** — it is slower than the cloud tiers, which is the trade for `$0.00/token`. If your host already runs Ollama on `:11434`, `docker compose up` will fail to bind that port for the container; either skip the container (`docker compose up -d growpilot-agent n8n`) or move it with `OLLAMA_HOST_PORT=11500`.
 
+**Expect the first local run to be slow — that is normal, not a hang.** Measured on this laptop's CPU: a one-sentence request took 21s (9s of it just loading the model into RAM), and a full GTM generation took **90s** and returned `generationSource: ollama-local` at **$0.00 / 311 tokens**. The server therefore allows `OLLAMA_TIMEOUT_MS` (default 120000) per local call; an earlier 25s ceiling aborted every cold run into the deterministic fallback. Ollama keeps the model warm for a few minutes, so the second run in a session is much faster. The 3B model also writes plainly — its copy is more generic than Flash-Lite's, which is the honest trade for free inference.
+
 ---
 
 ### Option B: Run on Ubuntu 24.04 with Docker Compose (Agent + Local Ollama + n8n)
