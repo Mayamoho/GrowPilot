@@ -123,7 +123,7 @@ export const LiveVoiceAgentPanel: React.FC<LiveVoiceAgentPanelProps> = ({
     if (float32Data.length === 0) return;
 
     const audioBuffer = ctx.createBuffer(1, float32Data.length, 24000);
-    audioBuffer.copyToChannel(float32Data, 0);
+    audioBuffer.getChannelData(0).set(float32Data);
 
     const source = ctx.createBufferSource();
     source.buffer = audioBuffer;

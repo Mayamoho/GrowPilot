@@ -670,7 +670,7 @@ export const GtmStudioView: React.FC<GtmStudioViewProps> = ({
                       <div className="flex items-center justify-between pb-2 border-b border-slate-200">
                         <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-900">
                           <ShieldCheck className="w-4 h-4 text-teal-700" />
-                          CareerPilot 5-Layer Groundedness Verification
+                          5-Layer Source Fact &amp; Groundedness Check
                         </div>
                         <span className="text-xs font-mono font-semibold text-emerald-700">
                           {activeRecord.groundednessReport.passed

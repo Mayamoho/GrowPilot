@@ -118,7 +118,7 @@ export const WhatsappAgentView: React.FC<WhatsappAgentViewProps> = ({
 
     const res = await onSendMessage({
       message: textToSend.trim(),
-      sessionId: 'growbig100-demo-session',
+      sessionId: 'growpilot-live-session',
       modelPreference,
       channel,
     });

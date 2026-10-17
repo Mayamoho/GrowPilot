@@ -32,14 +32,14 @@ export const CostBenchmarkView: React.FC = () => {
     <div className="space-y-8">
       {/* Header */}
       <div className="pb-5 border-b border-slate-200">
-        <p className="text-xs font-medium text-slate-500">
-          03. Prompt Engineering, Smallest-Model Selection & Token Economics
+        <p className="text-xs font-semibold uppercase tracking-wider text-teal-700">
+          Token Economics &amp; Model Cost Simulator
         </p>
         <h1 className="font-display text-2xl sm:text-3xl font-bold text-slate-900 mt-1">
-          LLM Cost Efficiency & Prompt Engineering Benchmark Lab
+          Why This Agent Costs Pennies Instead of Hundreds of Dollars
         </h1>
         <p className="text-sm text-slate-600 mt-1.5 max-w-3xl">
-          Simulate monthly WhatsApp/web agent and GTM scraping volume to see how Layer 0 caching, HTML boilerplate stripping, sliding-window memory, and choosing the smallest model that works reduce API spend by 98%+.
+          Use the sliders below to test your own monthly message volume. You can see exactly how answering common FAQs from cache, stripping HTML clutter, and picking smaller models cuts your monthly API bill by over 98%.
         </p>
       </div>
 
@@ -243,10 +243,10 @@ export const CostBenchmarkView: React.FC = () => {
           </div>
 
           <div className="mt-4 p-3.5 bg-teal-50/70 border border-teal-200 rounded-lg text-xs text-teal-950">
-            <span className="font-semibold">Engineering Takeaway for Growbig100: </span>
+            <span className="font-semibold">What this means in practice: </span>
             Running <span className="font-mono font-semibold">gemini-3.1-flash-lite</span> or local{' '}
-            <span className="font-mono font-semibold">Ollama llama3.2:3b</span> behind a 65% FAQ cache handles{' '}
-            <span className="font-mono font-semibold">{monthlyConversations.toLocaleString()}</span> monthly customer interactions for under{' '}
+            <span className="font-mono font-semibold">Ollama llama3.2:3b</span> behind a {faqCacheHitPct}% FAQ cache handles{' '}
+            <span className="font-mono font-semibold">{monthlyConversations.toLocaleString()}</span> monthly customer conversations for under{' '}
             <span className="font-mono font-semibold">$0.50/month</span> instead of{' '}
             <span className="font-mono font-semibold">${unoptimizedMonthlyUsd.toFixed(2)}/month</span>.
           </div>

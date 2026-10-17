@@ -75,7 +75,7 @@ let telemetryLedger = {
 const bookDiscoveryCallDeclaration: FunctionDeclaration = {
   name: 'book_discovery_call',
   description:
-    'Book a 30-minute discovery call and log the qualified lead into the Growbig100 CRM when the user shares their business need and monthly budget.',
+    'Book a 30-minute discovery call and log the qualified lead into the GrowPilot CRM when the user shares their business need and monthly budget.',
   parameters: {
     type: Type.OBJECT,
     properties: {
@@ -378,7 +378,7 @@ async function startServer() {
           contents: `Analyze this stripped source text for "${companyName}" (${industry}):\n\n${stripped.cleanedText}`,
           config: {
             systemInstruction:
-              'You are a GTM Engineering & AI Automation specialist at Growbig100. Extract ONLY factual claims present in the source text. Never invent numbers, awards, or metrics not in the text (you may mention 24/7 availability or $0.00 cached FAQs). Keep copy concise and high-converting.',
+              'You are a GTM Engineering & AI Automation specialist at GrowPilot. Extract ONLY factual claims present in the source text. Never invent numbers, awards, or metrics not in the text (you may mention 24/7 availability or $0.00 cached FAQs). Keep copy concise and high-converting.',
             temperature: 0.2,
             responseMimeType: 'application/json',
             responseSchema: {
@@ -655,7 +655,7 @@ async function startServer() {
       leadScore = 'HOT_BOOKED';
       nextAction = 'CALL_GOOGLE_CALENDAR_AND_APPEND_CRM';
       bookedSlot = 'Mon 21 Oct, 3:30 PM BDT (30-min Discovery Call)';
-      replyText = `Thank you! With a monthly budget of $${extractedBudgetUsd}/mo, you qualify for our full 24/7 WhatsApp + Website AI Agent & n8n CRM Automation suite. I checked Saadi's Google Calendar and reserved ${bookedSlot} for your walkthrough. Your lead profile has been logged to the Growbig100 CRM sheet as HOT_BOOKED.`;
+      replyText = `Thank you! With a monthly budget of $${extractedBudgetUsd}/mo, you qualify for our full 24/7 WhatsApp + Website AI Agent & n8n CRM Automation suite. I checked our team's Google Calendar and reserved ${bookedSlot} for your walkthrough. Your lead profile has been logged to the GrowPilot CRM sheet as HOT_BOOKED.`;
     } else if (extractedBudgetUsd > 0 && extractedBudgetUsd < 500) {
       intent = 'LOW_BUDGET_NURTURE';
       leadScore = 'WARM_NURTURE';
@@ -676,7 +676,7 @@ async function startServer() {
               .join('\n')}\n\nRespond to the latest user message.`,
             config: {
               systemInstruction:
-                'You are Growbig100’s 24/7 AI Lead Qualification Agent. Answer concisely in 2-3 sentences based strictly on these facts: Starter AI Agent + n8n package is $500/mo (25,000 BDT/mo), deploys in 48h on Docker, connects to WhatsApp, Google Sheets, and Google Calendar. Politely ask for their business type, automation goal, and monthly budget to book a discovery call.',
+                'You are GrowPilot’s 24/7 AI Lead Qualification Agent. Answer concisely in 2-3 sentences based strictly on these facts: Starter AI Agent + n8n package is $500/mo (25,000 BDT/mo), deploys in 48h on Docker, connects to WhatsApp, Google Sheets, and Google Calendar. Politely ask for their business type, automation goal, and monthly budget to book a discovery call.',
               temperature: 0.2,
             },
           });
@@ -817,7 +817,7 @@ async function startServer() {
         outputAudioTranscription: {},
         tools: [{ functionDeclarations: [bookDiscoveryCallDeclaration] }],
         systemInstruction:
-          'You are GrowPilot, the 24/7 Voice Qualification and Appointment Booking AI Agent built by Abu Kawser for Growbig100. Speak naturally, concisely, and warmly in 1-3 short sentences. Key facts: Our 24/7 WhatsApp & Web AI Agent + n8n automation package starts at $500/month (or 25,000 BDT/month for local Bangladesh clinics and businesses) and deploys in 48 hours on Docker. Ask the caller what their business does and their approximate monthly budget. When they share their business need and a budget, call the book_discovery_call tool to log their lead and book a discovery slot.',
+          'You are GrowPilot, the 24/7 Voice Qualification and Appointment Booking AI Agent. Speak naturally, concisely, and warmly in 1-3 short sentences. Key facts: Our 24/7 WhatsApp & Web AI Agent + n8n automation package starts at $500/month (or 25,000 BDT/month for local Bangladesh clinics and businesses) and deploys in 48 hours on Docker. Ask the caller what their business does and their approximate monthly budget. When they share their business need and a budget, call the book_discovery_call tool to log their lead and book a discovery slot.',
       },
       callbacks: {
         onopen: () => {

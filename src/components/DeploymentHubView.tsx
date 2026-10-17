@@ -12,20 +12,25 @@ import {
   FileJson,
   Layers,
   Globe,
+  ExternalLink,
 } from 'lucide-react';
 
-const LOCAL_AND_VERCEL_SETUP_GUIDE = `# 1. Clone the repository & enter the project directory
+const LOCAL_AND_DOCKER_SETUP_COMMANDS = `# 1. Clone the repository & enter the project folder
 git clone https://github.com/Mayamoho/GrowPilot.git
 cd GrowPilot
 
-# 2. Configure environment variables (optional for offline/deterministic mode)
+# 2. Install dependencies cleanly (no peer conflicts)
+npm install --legacy-peer-deps
+
+# 3. Run the 7 pure-logic unit tests (runs offline in <1s)
+npm test
+
+# 4. Optional: Add a free Gemini API key for live cloud calls
 cp .env.example .env
 
 # ---------------------------------------------------------
-# OPTION A: Run Locally with Node.js (Port 3000)
+# OPTION A: Run Directly with Node.js (Port 3000)
 # ---------------------------------------------------------
-npm install --legacy-peer-deps
-npm test
 npm run dev
 
 # ---------------------------------------------------------
@@ -35,16 +40,22 @@ npm run dev
 docker compose up -d --build
 docker compose ps`;
 
-const SUBDOMAIN_VERCEL_GUIDE = `# Live Deployed Versions & Entry Points
+const PLAIN_ENGLISH_HOW_IT_WORKS = `# How GrowPilot Works (Plain-English Summary)
 
-1. https://growpilot-ashy.vercel.app/
-   Full GrowPilot suite on Vercel (all 4 modules: GTM Pipeline, 24/7 FAQ & Booking Agent, Token & Cost Lab, Architecture & Setup).
+1. Outbound GTM Pipeline (https://gtm.abukawser.xyz)
+   - Strips <script>, <style>, <nav>, and <footer> clutter from scraped HTML first, cutting ~70-80% of input tokens before any model runs.
+   - Scores whether the company is actually a match (0-100 ICP Fit Score). If the score is below your slider threshold (default 60), it stops right there and spends 0 outbound tokens.
+   - Drafts a Cold Email, WhatsApp opener, and LinkedIn post using small, fast models (Gemini 3.8 Flash, Gemini 3.1 Flash-Lite, or local Ollama Llama 3.2 3B).
+   - Verifies every number and fact against the source webpage through a 5-layer check so the AI never invents fake stats.
+   - Exports all analyzed leads to CSV with one click ("Download CSV").
 
-2. https://gtm.abukawser.xyz
-   Dedicated GTM Engineering entry point — opens directly into the Autonomous GTM Scraper, HTML Boilerplate Stripper, ICP Fit Gate, and 5-Layer Grounded Outbound Generator.
+2. 24/7 FAQ & Lead Booking Agent (https://agent.abukawser.xyz)
+   - Checks a normalized Layer 0 FAQ Cache first. Common questions about pricing, WhatsApp setup, or hours are answered in <5ms for 0 tokens ($0.00).
+   - Caps chat history at the last 6 messages so long WhatsApp threads never get expensive.
+   - When a lead shares a monthly budget >= $500/mo, the agent automatically reserves a discovery call slot and logs the lead into the CRM table.
 
-3. https://agent.abukawser.xyz
-   Dedicated Customer Agent entry point — opens directly into the 24/7 Cached WhatsApp/Web FAQ & Lead Qualification Agent and Live Execution Token Inspector.`;
+3. Full Workbench on Vercel (https://growpilot-ashy.vercel.app/)
+   - Hosts all four modules in one place, with automatic subdomain routing for gtm.abukawser.xyz and agent.abukawser.xyz.`;
 
 export const DeploymentHubView: React.FC = () => {
   const [activeDocTab, setActiveDocTab] = useState<
@@ -74,13 +85,13 @@ export const DeploymentHubView: React.FC = () => {
       <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 pb-5 border-b border-slate-200">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-teal-700">
-            Architecture &amp; Deployment
+            How It Works &amp; Local Setup
           </p>
           <h1 className="font-display text-2xl sm:text-3xl font-bold text-slate-900 mt-1">
-            Agent Workflow, Docker Compose &amp; Vercel Setup
+            Plain-English Workflow, Docker Compose &amp; Live Links
           </h1>
           <p className="text-sm text-slate-600 mt-1.5 max-w-3xl">
-            Technical overview of the 5-stage cost-optimized agent pipeline and ready-to-run configuration files for Ubuntu 24.04 Docker Compose, n8n, and Vercel subdomain routing.
+            A clear walkthrough of how GrowPilot keeps token costs near zero while preventing AI hallucinations, plus copy-paste commands to run the full stack locally on Node.js or Ubuntu 24.04 Docker Compose.
           </p>
         </div>
 
@@ -116,46 +127,97 @@ export const DeploymentHubView: React.FC = () => {
         </div>
       </div>
 
-      {/* 5-Stage Technical Architecture Pipeline */}
+      {/* Live Deployments Strip */}
+      <section
+        aria-label="Live Production Entry Points"
+        className="grid grid-cols-1 md:grid-cols-3 gap-4"
+      >
+        {[
+          {
+            title: 'Full GrowPilot Workbench (Vercel)',
+            url: 'https://growpilot-ashy.vercel.app/',
+            badge: 'All 4 Modules',
+            desc: 'Main production deployment hosting the GTM Pipeline, 24/7 FAQ & Booking Agent, Token Cost Lab, and Setup Guide.',
+          },
+          {
+            title: 'Dedicated GTM Pipeline Link',
+            url: 'https://gtm.abukawser.xyz',
+            badge: 'Opens GTM Studio',
+            desc: 'Opens directly into the outbound HTML stripper, ICP fit scorer (0–100), 5-layer fact checker, and CSV lead exporter.',
+          },
+          {
+            title: 'Dedicated 24/7 Customer Agent Link',
+            url: 'https://agent.abukawser.xyz',
+            badge: 'Opens 24/7 Agent',
+            desc: 'Opens directly into the 0-token cached FAQ responder, 6-turn lead qualifier, voice call agent, and CRM booking table.',
+          },
+        ].map((item) => (
+          <a
+            key={item.url}
+            href={item.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="bg-white border border-slate-200 hover:border-teal-600 rounded-xl p-4 flex flex-col justify-between transition-colors group"
+          >
+            <div>
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="font-semibold text-teal-800 bg-teal-50 px-2 py-0.5 rounded">
+                  {item.badge}
+                </span>
+                <ExternalLink className="w-3.5 h-3.5 text-slate-400 group-hover:text-teal-700 transition-colors" />
+              </div>
+              <h2 className="font-display text-sm font-bold text-slate-900 mt-2">
+                {item.title}
+              </h2>
+              <p className="text-xs text-slate-600 mt-1 leading-relaxed">{item.desc}</p>
+            </div>
+            <div className="mt-3 pt-2 border-t border-slate-100 text-xs font-mono text-teal-700 truncate">
+              {item.url}
+            </div>
+          </a>
+        ))}
+      </section>
+
+      {/* 5-Stage Plain-English Architecture Pipeline */}
       <section aria-label="Technical Workflow Overview" className="space-y-3">
         <div className="flex items-center gap-2">
           <Layers className="w-4 h-4 text-teal-700" />
           <h2 className="font-display text-base font-bold text-slate-900">
-            End-to-End Agent Workflow (5-Stage Cost &amp; Groundedness Pipeline)
+            How the Agent Saves Tokens &amp; Stops Hallucinations (5 Steps)
           </h2>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
           {[
             {
-              step: 'Stage 01',
-              title: 'Layer 0 Cache',
+              step: 'Step 01',
+              title: 'Layer 0 Cache First',
               metric: '0 Tokens · <5ms',
-              desc: 'Normalizes incoming FAQ queries and scraped URLs. Exact or Jaccard keyword matches (>=62%) return immediately at $0.00 cost.',
+              desc: 'Before calling any AI model, code checks if this FAQ question or webpage was already answered. Repeat hits return in under 5ms for $0.00.',
             },
             {
-              step: 'Stage 02',
-              title: 'Input Compression',
-              metric: '-80% Prompt Tokens',
-              desc: 'Strips HTML <script>, <style>, <nav>, and <footer> tags from scraped pages and caps chat context to a 6-turn sliding window.',
+              step: 'Step 02',
+              title: 'Strip HTML Clutter',
+              metric: '-80% Input Size',
+              desc: 'Removes <script>, <style>, <nav>, and <footer> tags from scraped pages, and keeps only the last 6 chat messages in memory.',
             },
             {
-              step: 'Stage 03',
-              title: 'ICP Score Gate',
-              metric: '0–100 Fit Filter',
-              desc: 'Scores prospect buying signals before calling generation models. Leads below threshold (<60) are skipped to prevent wasted tokens.',
+              step: 'Step 03',
+              title: 'Score Lead Fit (ICP)',
+              metric: '0–100 Gate',
+              desc: 'Scores whether a website is actually a commercial prospect. If it scores below your slider (e.g. <60), we skip outbound writing to save tokens.',
             },
             {
-              step: 'Stage 04',
-              title: 'Smallest-Model Router',
+              step: 'Step 04',
+              title: 'Pick Smallest Model',
               metric: 'Ollama / Flash-Lite',
-              desc: 'Routes classification and generation to local Ollama Llama 3.2 3B ($0.00), Gemini 3.1 Flash-Lite ($0.075/1M), or Gemini 3.8 Flash.',
+              desc: 'Uses local Ollama Llama 3.2 3B ($0.00), Gemini 3.1 Flash-Lite ($0.075/1M), or Gemini 3.8 Flash instead of overpaying for heavy models.',
             },
             {
-              step: 'Stage 05',
-              title: '5-Layer Groundedness',
-              metric: 'Zero Hallucinations',
-              desc: 'Verifies target entities, numerical claims, and source fact overlap before syncing qualified leads and calendar slots to CRM.',
+              step: 'Step 05',
+              title: '5-Layer Fact Check',
+              metric: 'No Fake Numbers',
+              desc: 'Cross-checks every number and fact in the generated email against the source webpage before logging leads or booking calendar calls.',
             },
           ].map((stage) => (
             <div
@@ -200,7 +262,7 @@ export const DeploymentHubView: React.FC = () => {
               }`}
             >
               <Globe className="w-3.5 h-3.5" />
-              Local, Docker &amp; Subdomain Setup
+              Quick Start &amp; Plain-English Guide
             </button>
 
             <button
@@ -238,7 +300,7 @@ export const DeploymentHubView: React.FC = () => {
             {activeDocTab === 'setup-guide' && (
               <button
                 type="button"
-                onClick={() => handleCopy(LOCAL_AND_VERCEL_SETUP_GUIDE, 'setup-cmd')}
+                onClick={() => handleCopy(LOCAL_AND_DOCKER_SETUP_COMMANDS, 'setup-cmd')}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 whitespace-nowrap shrink-0 cursor-pointer"
               >
                 {copiedKey === 'setup-cmd' ? (
@@ -299,19 +361,19 @@ export const DeploymentHubView: React.FC = () => {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="space-y-2">
               <div className="text-xs font-semibold text-slate-800">
-                Ubuntu 24.04 Local &amp; Docker Compose Setup
+                Step-by-Step Local &amp; Ubuntu 24.04 Docker Commands
               </div>
               <pre className="p-4 bg-slate-900 text-slate-100 font-mono text-xs leading-relaxed rounded-xl overflow-x-auto">
-                {LOCAL_AND_VERCEL_SETUP_GUIDE}
+                {LOCAL_AND_DOCKER_SETUP_COMMANDS}
               </pre>
             </div>
 
             <div className="space-y-2">
               <div className="text-xs font-semibold text-slate-800">
-                Live Deployed Versions (Vercel, gtm &amp; agent)
+                What Each Part of GrowPilot Does
               </div>
-              <pre className="p-4 bg-slate-900 text-slate-100 font-mono text-xs leading-relaxed rounded-xl overflow-x-auto">
-                {SUBDOMAIN_VERCEL_GUIDE}
+              <pre className="p-4 bg-slate-900 text-slate-100 font-mono text-xs leading-relaxed rounded-xl overflow-x-auto whitespace-pre-wrap">
+                {PLAIN_ENGLISH_HOW_IT_WORKS}
               </pre>
             </div>
           </div>
@@ -329,7 +391,7 @@ export const DeploymentHubView: React.FC = () => {
             </div>
             <div className="lg:col-span-5 space-y-2">
               <div className="text-xs font-semibold text-slate-800">
-                Dockerfile (Root Repository File)
+                Dockerfile (Uses npm install --legacy-peer-deps)
               </div>
               <pre className="p-4 bg-slate-900 text-slate-100 font-mono text-xs leading-relaxed rounded-xl overflow-x-auto max-h-[460px]">
                 {DOCKERFILE_CONTENT}
