@@ -1,8 +1,8 @@
 {
-  "buildCommand": "npm run build",
+  "buildCommand": "npm run vercel-build",
   "outputDirectory": "dist",
   "functions": {
-    "api/[...path].ts": {
+    "api/[...path].mjs": {
       "maxDuration": 300
     }
   },
