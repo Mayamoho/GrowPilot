@@ -1,7 +1,7 @@
 export type ModelTierId =
   | 'ollama-llama3.2-3b'
-  | 'gemini-3.1-flash-lite'
-  | 'gemini-3.5-flash'
+  | 'gemini-3.5-flash-lite'
+  | 'gemini-3.8-flash'
   | 'frontier-baseline';
 
 export interface ModelTierSpec {
@@ -17,9 +17,10 @@ export interface ModelTierSpec {
 }
 
 /**
- * Prices are the Google AI (Developer API) paid tier, text in/out, no caching.
- * See https://ai.google.dev/gemini-api/docs/pricing — they drift, so every value here
- * is overridable per deployment (see resolveModelTiers in server.ts).
+ * Prices are the Google AI (Developer API) paid tier, read from
+ * https://ai.google.dev/gemini-api/docs/pricing on 2026-10-18. Gemini 3.8 Flash is on an
+ * introductory $0.75/$3.75 that becomes $1.50/$7.50 on 2027-01-01. They drift, so every value
+ * here is overridable per deployment (see resolveApiModelId in server.ts).
  */
 export const MODEL_TIERS: Record<ModelTierId, ModelTierSpec> = {
   'ollama-llama3.2-3b': {
@@ -32,23 +33,23 @@ export const MODEL_TIERS: Record<ModelTierId, ModelTierSpec> = {
     avgLatencyMs: 290,
     recommendedFor: 'Zero-cost VPS/local FAQ routing, article summarization & ICP pre-screening',
   },
-  'gemini-3.1-flash-lite': {
-    id: 'gemini-3.1-flash-lite',
-    label: 'Gemini 3.1 Flash-Lite',
+  'gemini-3.5-flash-lite': {
+    id: 'gemini-3.5-flash-lite',
+    label: 'Gemini 3.5 Flash-Lite',
     provider: 'Google GenAI API',
-    apiModelId: 'gemini-3.1-flash-lite',
-    inputCostPerMillionUsd: 0.25,
-    outputCostPerMillionUsd: 1.50,
+    apiModelId: 'gemini-3.5-flash-lite',
+    inputCostPerMillionUsd: 0.3,
+    outputCostPerMillionUsd: 2.5,
     avgLatencyMs: 220,
     recommendedFor: 'High-speed intent classification, ICP scoring & FAQ fallback',
   },
-  'gemini-3.5-flash': {
-    id: 'gemini-3.5-flash',
-    label: 'Gemini 3.5 Flash',
+  'gemini-3.8-flash': {
+    id: 'gemini-3.8-flash',
+    label: 'Gemini 3.8 Flash',
     provider: 'Google GenAI API',
-    apiModelId: 'gemini-3.5-flash',
-    inputCostPerMillionUsd: 0.50,
-    outputCostPerMillionUsd: 3.00,
+    apiModelId: 'gemini-3.8-flash',
+    inputCostPerMillionUsd: 0.75,
+    outputCostPerMillionUsd: 3.75,
     avgLatencyMs: 380,
     recommendedFor: 'Grounded multi-channel outbound copy, social posts & tool calling',
   },
@@ -65,13 +66,30 @@ export const MODEL_TIERS: Record<ModelTierId, ModelTierSpec> = {
 };
 
 /** Model used for the realtime voice path on `/live`. */
-export const LIVE_API_MODEL_ID = 'gemini-3.1-flash-live-preview';
+export const LIVE_API_MODEL_ID = 'gemini-3.8-live';
+
+/**
+ * Live API is billed per minute of audio, not per billed turn: $0.005/min in, $0.018/min out.
+ * Together with the PCM byte rates below this lets /live report a measured cost instead of a
+ * guessed one. Same pricing page as MODEL_TIERS.
+ */
+export const LIVE_AUDIO_USD_PER_MINUTE = { input: 0.005, output: 0.018 } as const;
+
+/** Bytes per second of the 16-bit mono PCM the Live API sends and receives. */
+export const LIVE_PCM_BYTES_PER_SECOND = { input: 32_000, output: 48_000 } as const;
+
+/**
+ * Audio tokens per minute, derived from Google publishing both units for the same thing
+ * ($3.00-or-$0.005/min in, $12.00-or-$0.018/min out): 0.005/3.00 and 0.018/12.00 give
+ * 1,667 and 1,500 tokens per minute. Only used to report a token count for voice turns.
+ */
+export const LIVE_TOKENS_PER_MINUTE = { input: 1_667, output: 1_500 } as const;
 
 /** Tiers a user can actually pick in the UI (`frontier-baseline` is comparison-only). */
 export const SELECTABLE_MODEL_TIERS: ModelTierId[] = [
   'ollama-llama3.2-3b',
-  'gemini-3.1-flash-lite',
-  'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.8-flash',
 ];
 
 /**
@@ -277,7 +295,7 @@ export function calculateRunCost(params: {
   /** False when the deterministic template answered instead of a model — bills nothing. */
   modelCalled?: boolean;
 }): CostMetrics {
-  const spec = MODEL_TIERS[params.modelUsed] || MODEL_TIERS['gemini-3.1-flash-lite'];
+  const spec = MODEL_TIERS[params.modelUsed] || MODEL_TIERS['gemini-3.5-flash-lite'];
   const frontier = MODEL_TIERS['frontier-baseline'];
 
   const modelCalled = params.modelCalled !== false;

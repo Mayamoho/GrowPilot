@@ -17,9 +17,11 @@ services:
       # "fetch failed" while the same .env worked perfectly outside Docker.
       - OLLAMA_BASE_URL=${CONTAINER_OLLAMA_BASE_URL:-http://ollama:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
-      - GEMINI_MODEL_FLASH=${GEMINI_MODEL_FLASH:-gemini-3.5-flash}
-      - GEMINI_MODEL_FLASH_LITE=${GEMINI_MODEL_FLASH_LITE:-gemini-3.1-flash-lite}
-      - GEMINI_MODEL_LIVE=${GEMINI_MODEL_LIVE:-gemini-3.1-flash-live-preview}
+      # Defaults track the model IDs confirmed against GET /v1beta/models on 2026-10-18; an old
+      # default silently sends a preview model that the key's project may no longer expose.
+      - GEMINI_MODEL_FLASH=${GEMINI_MODEL_FLASH:-gemini-3.8-flash}
+      - GEMINI_MODEL_FLASH_LITE=${GEMINI_MODEL_FLASH_LITE:-gemini-3.5-flash-lite}
+      - GEMINI_MODEL_LIVE=${GEMINI_MODEL_LIVE:-gemini-3.8-live}
       - N8N_WEBHOOK_URL=${CONTAINER_N8N_WEBHOOK_URL:-http://n8n:5678/webhook/growpilot-lead}
       - N8N_USER=${N8N_USER:-}
       - N8N_PASSWORD=${N8N_PASSWORD:-}

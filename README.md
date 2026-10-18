@@ -15,7 +15,7 @@ When businesses try to use AI to find leads or answer customer messages on Whats
 2. **The AI invents numbers, awards, or promises you never made.**
    - Left unchecked, language models love to "hallucinate" — congratulating a prospect on a funding round that never happened, inventing a statistic that wasn't on their website, or quoting the wrong price to a customer.
 
-**GrowPilot solves both problems by putting plain, deterministic TypeScript code in front of and behind the AI model.** Code strips the HTML junk, code checks a fast local cache before spending a single token, code scores whether a prospect is worth emailing, and code verifies every number in the final output against the source text. The AI model is only called when you genuinely need fresh writing or live lead qualification — and even then, it uses small, fast models (`Gemini 3.1 Flash-Lite`, `Gemini 3.5 Flash`, or a free local `Ollama Llama 3.2 3B` container).
+**GrowPilot solves both problems by putting plain, deterministic TypeScript code in front of and behind the AI model.** Code strips the HTML junk, code checks a fast local cache before spending a single token, code scores whether a prospect is worth emailing, and code verifies every number in the final output against the source text. The AI model is only called when you genuinely need fresh writing or live lead qualification — and even then, it uses small, fast models (`Gemini 3.5 Flash-Lite`, `Gemini 3.8 Flash`, or a free local `Ollama Llama 3.2 3B` container).
 
 ---
 
@@ -103,7 +103,7 @@ All 10 pure-logic unit tests in `src/utils/agentEngine.test.ts` run in under hal
 
 GrowPilot's HTML stripper, Layer 0 FAQ cache, ICP scorer, 5-layer groundedness verifier, CSV exporter, and deterministic fallback engine all work **100% offline with no API key**.
 
-If you want live cloud generation from `gemini-3.1-flash-lite`, `gemini-3.5-flash`, or real-time voice calls via `gemini-3.1-flash-live-preview`:
+If you want live cloud generation from `gemini-3.5-flash-lite`, `gemini-3.8-flash`, or real-time voice calls via `gemini-3.8-live`:
 
 ```bash
 cp .env.example .env
@@ -128,7 +128,7 @@ GEMINI_QUOTA_FALLBACK="1"
 | Response | GrowPilot's behaviour |
 |---|---|
 | `503 high demand`, `429 rate limit` | Retries with exponential backoff capped at 12s plus jitter, up to `GEMINI_MAX_ATTEMPTS` tries. |
-| `429 exceeded your current quota / check your plan and billing` | Permanent for that tier. GrowPilot re-answers with `gemini-3.1-flash-lite`, bills the run at the tier that actually replied, and writes `gemini-3.5-flash is out of quota for this key; copy was generated and billed by gemini-3.1-flash-lite.` into the run's audit strip. |
+| `429 exceeded your current quota / check your plan and billing` | Permanent for that tier. GrowPilot re-answers with `gemini-3.5-flash-lite`, bills the run at the tier that actually replied, and writes `gemini-3.8-flash is out of quota for this key; copy was generated and billed by gemini-3.5-flash-lite.` into the run's audit strip. |
 | Any other failure | Deterministic template, labelled `Deterministic template (no model billed)` with `$0.00` and `modelCalled: false`. Never a silent lie. |
 
 That degrade is this project's own thesis — route to the smallest model that answers — so it is on by default. Set `GEMINI_QUOTA_FALLBACK=""` (or `0`) to make a quota-blocked tier surface the error instead of quietly re-billing a cheaper model.
@@ -376,8 +376,8 @@ GrowPilot is organized into **three focused tabs** in the top navigation bar (pl
 * **`Execution Model Tier` Dropdown (Which Model Runs the Pipeline):**
   You can choose which AI model drafts the outreach copy once a lead passes the ICP gate:
   - **`Ollama Llama 3.2 3B (Ubuntu Local · $0.00)`**: Runs 100% locally — the server POSTs to `${OLLAMA_BASE_URL}/api/chat` inside your Ubuntu Docker container at **$0.00 per token**. Ideal for bulk lead enrichment when you want zero cloud API bills. If Ollama is unreachable the run falls back to the deterministic template and the output header says so instead of pretending a model answered.
-  - **`Gemini 3.1 Flash-Lite ($0.25 in / $1.50 out · per 1M tok)`**: Ultra-fast, low-cost Google Gemini tier for high-speed extraction and concise outreach.
-  - **`Gemini 3.5 Flash ($0.50 in / $3.00 out · per 1M tok)`**: Default balanced tier for rich structured JSON generation across all four outbound channels (Email, Follow-Up, WhatsApp, and Social Post).
+  - **`Gemini 3.5 Flash-Lite ($0.30 in / $2.50 out · per 1M tok)`**: Ultra-fast, low-cost Google Gemini tier for high-speed extraction and concise outreach.
+  - **`Gemini 3.8 Flash ($0.75 in / $3.75 out · per 1M tok, introductory through 2026-12-31)`**: Default balanced tier for rich structured JSON generation across all four outbound channels (Email, Follow-Up, WhatsApp, and Social Post).
 
   > Model IDs and prices are read from `MODEL_TIERS` in `src/utils/agentEngine.ts` and can be overridden per deployment with `GEMINI_MODEL_FLASH_LITE`, `GEMINI_MODEL_FLASH` and `GEMINI_MODEL_LIVE` — Google rotates preview IDs, so a stale ID is a `.env` edit rather than a code change.
 
@@ -430,7 +430,7 @@ Every prospect you analyze is automatically logged into the table at the bottom 
 
 ### Tab 2: `24/7 FAQ & Booking Agent` (`Cached FAQ Answering & Autonomous Booking Agent`)
 
-**What this tab is for:** Simulating and managing a 24/7 inbound customer assistant (for WhatsApp Business and website chat widgets) that answers recurring FAQs in under 5 milliseconds for **0 tokens ($0.00)**, keeps chat memory capped at **6 turns**, qualifies a lead's monthly budget, and automatically books discovery calls into your CRM — via both **text chat** and **real-time voice calls (`Gemini 3.1 Flash Live`)**.
+**What this tab is for:** Simulating and managing a 24/7 inbound customer assistant (for WhatsApp Business and website chat widgets) that answers recurring FAQs in under 5 milliseconds for **0 tokens ($0.00)**, keeps chat memory capped at **6 turns**, qualifies a lead's monthly budget, and automatically books discovery calls into your CRM — via both **text chat** and **real-time voice calls (`Gemini 3.8 Live`)**.
 
 ---
 
@@ -444,16 +444,16 @@ The **`Channel`** selector lets you choose which customer entry point you are si
 - **`Channel: Embedded Website Widget`**: Simulates a visitor chatting through the floating chat bubble on your website.
 - **What changing `Channel` does:** It updates the live conversation header (`Live WhatsApp Business Conversation` vs. `Live Embedded Website Widget Conversation`) and tags every qualified lead booked during that session with the exact source channel (`WhatsApp Business` or `Website Widget`) inside the **Live Google Sheets / CRM Qualification & Booking Log** table at the bottom of the page.
 
-##### B. What is the `Model` Dropdown? (`Model: Ollama Llama 3.2 3B ($0.00)`, `Model: Gemini 3.1 Flash-Lite`, `Model: Gemini 3.5 Flash`)
+##### B. What is the `Model` Dropdown? (`Model: Ollama Llama 3.2 3B ($0.00)`, `Model: Gemini 3.5 Flash-Lite`, `Model: Gemini 3.8 Flash`)
 The **`Model`** dropdown selects the **Fallback LLM Tier** used when a message is **not** in the Layer 0 FAQ Cache:
 - **When a customer asks a cached FAQ** (like *"What are your pricing plans?"*), the **`Layer 0 FAQ Cache`** intercepts the question in code and replies in `<5ms` for **0 tokens ($0.00)** — so the model isn't billed at all.
 - **When a customer sends a novel question or shares their business details and budget**, GrowPilot routes the turn (along with the last 6 messages of chat history) to whichever model you selected:
   - **`Ollama Llama 3.2 3B ($0.00)`**: Uses your local open-source model in Docker for `$0.00` token cost.
-  - **`Gemini 3.1 Flash-Lite`**: Default high-speed qualifier (`$0.25 / 1M` input, `$1.50 / 1M` output — roughly `$0.0001` per chat turn).
-  - **`Gemini 3.5 Flash`**: Higher-capacity reasoning model (`$0.50 / 1M` input, `$3.00 / 1M` output) for complex multi-part questions.
+  - **`Gemini 3.5 Flash-Lite`**: Default high-speed qualifier (`$0.30 / 1M` input, `$2.50 / 1M` output — roughly `$0.0006` per chat turn).
+  - **`Gemini 3.8 Flash`**: Higher-capacity reasoning model (`$0.75 / 1M` input, `$3.75 / 1M` output) for complex multi-part questions.
 
 ##### C. How to Use `Open Live Voice Call (Gemini Live)` Step-by-Step
-Clicking **`Open Live Voice Call (Gemini Live)`** expands the **Real-Time Voice Qualification & Booking Call** panel right above the chat simulator. This connects your browser over a bidirectional WebSocket (`/live`) to **`gemini-3.1-flash-live-preview`** (override with `GEMINI_MODEL_LIVE`).
+Clicking **`Open Live Voice Call (Gemini Live)`** expands the **Real-Time Voice Qualification & Booking Call** panel right above the chat simulator. This connects your browser over a bidirectional WebSocket (`/live`) to **`gemini-3.8-live`** (override with `GEMINI_MODEL_LIVE`).
 
 Here is how to run a live voice call:
 1. **Pick a `Voice Persona`** from the dropdown before starting the call:
@@ -470,8 +470,8 @@ Here is how to run a live voice call:
      - **`Ask Voice Agent About Pricing`**: Sends *"Hi! Can you tell me how much your 24/7 WhatsApp AI agent and n8n package costs per month?"* and plays the agent's spoken answer while streaming the live transcript.
      - **`Qualify & Book $900/mo Clinic Call`**: Sends *"We are SmileCare Dental Clinic in Dhaka with a $900 monthly budget. Please book a discovery call for Tue 22 Oct at 4:00 PM BDT."*
 4. **Watch the Live Tool Call (`book_discovery_call`) Book the Appointment:**
-   - When you tell the voice agent your business need and monthly budget, `gemini-3.1-flash-live-preview` invokes the `book_discovery_call` function declaration in real time, displays a green confirmation banner (`Voice Discovery Call Booked via Live Tool Call`), and immediately adds the new booking row to the **Live Google Sheets / CRM Qualification & Booking Log** table at the bottom of the page.
-   - **Verified against the live API**, a two-turn call ("12-chair Dhaka dental clinic, $1,400/mo on ads, losing enquiries after 8 PM" → "Tue 10 AM BDT works") produced spoken audio, then the tool call, then a real CRM row: `HOT_BOOKED`, `bookedSlot: "Tue 20 Oct, 10:00 AM BDT"`, `modelUsed: gemini-3.1-flash-live-preview`, 320 tokens / `$0.00019`, and `automationStatus: "delivered"` once n8n accepted the `lead.qualified` POST. The table is the app's own CRM log — a Google Sheet or Calendar row is whatever you wire downstream of the webhook in n8n.
+   - When you tell the voice agent your business need and monthly budget, `gemini-3.8-live` invokes the `book_discovery_call` function declaration in real time, displays a green confirmation banner (`Voice Discovery Call Booked via Live Tool Call`), and immediately adds the new booking row to the **Live Google Sheets / CRM Qualification & Booking Log** table at the bottom of the page.
+   - **Verified against the live API**, a two-turn call ("12-chair Dhaka dental clinic, $1,400/mo on ads, losing enquiries after 8 PM" → "Tue 10 AM BDT works") produced spoken audio, then the tool call, then a real CRM row: `HOT_BOOKED`, `bookedSlot: "Tue 20 Oct, 10:00 AM BDT"`, `modelUsed: gemini-3.8-live`, 320 tokens / `$0.00019`, and `automationStatus: "delivered"` once n8n accepted the `lead.qualified` POST. The table is the app's own CRM log — a Google Sheet or Calendar row is whatever you wire downstream of the webhook in n8n.
 5. **Click `End Live Voice Call`** when finished to close the WebSocket and release the microphone.
 
 ---
@@ -559,8 +559,8 @@ Every time a message is sent in the chat simulator, the right panel shows the ex
 
 Compares the exact monthly cost for your active calls across all four model tiers:
 1. **`Ollama Llama 3.2 3B (Ubuntu 24.04 Local)`**: `$0.000` input / `$0.00` output → **`$0.00/mo`** (100% savings).
-2. **`Gemini 3.1 Flash-Lite`**: `$0.25 / 1M` input / `$1.50 / 1M` output → **`$1.19/mo`** at 15,000 monthly requests (saves `$96.91/mo` vs. baseline).
-3. **`Gemini 3.5 Flash`**: `$0.50 / 1M` input / `$3.00 / 1M` output → **`$2.39/mo`** at 15,000 monthly requests (saves `$95.71/mo` vs. baseline).
+2. **`Gemini 3.5 Flash-Lite`**: `$0.30 / 1M` input / `$2.50 / 1M` output → **`$1.86/mo`** at 15,000 monthly requests (saves `$96.24/mo` vs. baseline).
+3. **`Gemini 3.8 Flash`**: `$0.75 / 1M` input / `$3.75 / 1M` output → **`$3.12/mo`** at 15,000 monthly requests (saves `$94.98/mo` vs. baseline).
 4. **`Unoptimized Frontier Model (Baseline)`**: Shows what the exact same 15,000 monthly requests cost when you send unstripped HTML (`4x` input tokens) and uncached FAQs to a `$3.00 / $15.00 per 1M` frontier model (**`$98.10/mo`**).
 
 #### 3. Bottom Panel: `Prompt Engineering Discipline` Comparison

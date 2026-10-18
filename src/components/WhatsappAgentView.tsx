@@ -82,7 +82,7 @@ export const WhatsappAgentView: React.FC<WhatsappAgentViewProps> = ({
         slidingWindowTurns: 1,
         droppedTurns: 0,
         costMetrics: {
-          modelUsed: 'gemini-3.1-flash-lite',
+          modelUsed: 'gemini-3.5-flash-lite',
           modelLabel: 'Layer 0 Cache (0 Tokens)',
           cacheHit: true,
           inputTokens: 0,
@@ -98,7 +98,7 @@ export const WhatsappAgentView: React.FC<WhatsappAgentViewProps> = ({
   ]);
 
   const [inputMessage, setInputMessage] = useState<string>('');
-  const [modelPreference, setModelPreference] = useState<ModelTierId>('gemini-3.1-flash-lite');
+  const [modelPreference, setModelPreference] = useState<ModelTierId>('gemini-3.5-flash-lite');
   const [channel, setChannel] = useState<'WhatsApp Business' | 'Website Widget'>(
     'WhatsApp Business'
   );

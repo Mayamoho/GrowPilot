@@ -28,6 +28,22 @@ function float32ToPcm16Base64(float32Array: Float32Array): string {
   return btoa(binary);
 }
 
+/**
+ * Capture runs in a worklet, not on the main thread: the transcript repaints on every
+ * streaming delta, and a ScriptProcessorNode fed by the main thread drops frames under
+ * that load, which the recognizer hears as clipped speech.
+ */
+const CAPTURE_WORKLET_SOURCE = `
+class Pcm16Capture extends AudioWorkletProcessor {
+  process(inputs) {
+    const channel = inputs[0] && inputs[0][0];
+    if (channel) this.port.postMessage(channel.slice(0));
+    return true;
+  }
+}
+registerProcessor('growpilot-pcm16-capture', Pcm16Capture);
+`;
+
 function base64Pcm16ToFloat32(base64: string): Float32Array {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
@@ -48,13 +64,20 @@ export const LiveVoiceAgentPanel: React.FC<LiveVoiceAgentPanelProps> = ({
   const [callState, setCallState] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
   const [selectedVoice, setSelectedVoice] = useState<string>('Zephyr');
   const [isMicMuted, setIsMicMuted] = useState<boolean>(false);
+  const [allowBargeIn, setAllowBargeIn] = useState<boolean>(false);
+  const [liveModelLabel, setLiveModelLabel] = useState<string>('gemini-3.8-live');
+  const [lastCallUsage, setLastCallUsage] = useState<{
+    audioSecondsIn: number;
+    audioSecondsOut: number;
+    costUsd: number;
+  } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [lastVoiceBooking, setLastVoiceBooking] = useState<CrmBookingRecord | null>(null);
   const [transcripts, setTranscripts] = useState<LiveTranscriptEntry[]>([
     {
       id: 'init-voice-note',
       role: 'system',
-      text: 'Ready for real-time voice conversation via gemini-3.1-flash-live-preview (16kHz PCM mic input · 24kHz gapless audio output · live CRM tool calling).',
+      text: 'Ready for real-time voice conversation (16kHz PCM mic input · 24kHz audio output · live CRM tool calling). On laptop speakers keep Barge-in off, or the agent hears itself and cuts its own reply.',
       timestamp: 'Ready',
     },
   ]);
@@ -64,20 +87,29 @@ export const LiveVoiceAgentPanel: React.FC<LiveVoiceAgentPanelProps> = ({
   const outputAudioCtxRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const captureNodeRef = useRef<AudioWorkletNode | null>(null);
   const nextStartTimeRef = useRef<number>(0);
   const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
   const isMicMutedRef = useRef<boolean>(false);
+  const allowBargeInRef = useRef<boolean>(false);
+  const pendingAssistantBreakRef = useRef<boolean>(false);
 
-  const appendTranscript = (role: 'user' | 'assistant' | 'system', text: string) => {
+  const appendTranscript = (
+    role: 'user' | 'assistant' | 'system',
+    text: string,
+    options?: { newTurn?: boolean }
+  ) => {
     if (!text.trim()) return;
+    const forceBreak = options?.newTurn || (role === 'assistant' && pendingAssistantBreakRef.current);
+    if (role === 'assistant') pendingAssistantBreakRef.current = false;
     setTranscripts((prev) => {
       const last = prev[prev.length - 1];
-      if (last && last.role === role && role !== 'system') {
+      // Streaming deltas arrive mid-sentence ("…your budget" then " in mind?"), so they belong
+      // to the bubble already open — but never across a turn boundary the server has closed.
+      if (!forceBreak && last && last.role === role && role !== 'system') {
+        const glue = /\s$/.test(last.text) || /^\s/.test(text) ? '' : ' ';
         const updated = [...prev];
-        updated[updated.length - 1] = {
-          ...last,
-          text: `${last.text}${text}`,
-        };
+        updated[updated.length - 1] = { ...last, text: `${last.text}${glue}${text}` };
         return updated;
       }
       return [
@@ -140,6 +172,22 @@ export const LiveVoiceAgentPanel: React.FC<LiveVoiceAgentPanelProps> = ({
     };
   };
 
+  const agentIsSpeaking = () => activeSourcesRef.current.length > 0;
+
+  /**
+   * Half-duplex gate. On laptop speakers the microphone records the agent's own voice, the
+   * server reads that back as the caller interrupting, and the reply gets cut off
+   * mid-sentence — the bug that made every call feel broken. Not uploading audio while the
+   * agent talks removes it; Barge-in turns it back on for headphone users.
+   */
+  const forwardMicFrame = (float32: Float32Array) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (isMicMutedRef.current) return;
+    if (!allowBargeInRef.current && agentIsSpeaking()) return;
+    ws.send(JSON.stringify({ audio: float32ToPcm16Base64(float32) }));
+  };
+
   const cleanupSession = () => {
     stopPlaybackQueue();
 
@@ -150,6 +198,16 @@ export const LiveVoiceAgentPanel: React.FC<LiveVoiceAgentPanelProps> = ({
         // ignore
       }
       scriptProcessorRef.current = null;
+    }
+
+    if (captureNodeRef.current) {
+      try {
+        captureNodeRef.current.port.close();
+        captureNodeRef.current.disconnect();
+      } catch {
+        // ignore
+      }
+      captureNodeRef.current = null;
     }
 
     if (mediaStreamRef.current) {
@@ -196,31 +254,57 @@ export const LiveVoiceAgentPanel: React.FC<LiveVoiceAgentPanelProps> = ({
 
       ws.onopen = async () => {
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          });
           mediaStreamRef.current = stream;
+
+          const settings = stream.getAudioTracks()[0]?.getSettings() ?? {};
+          appendTranscript(
+            'system',
+            settings.echoCancellation
+              ? 'Mic open with echo cancellation ON.'
+              : 'Mic open but the device gave no echo cancellation — keep Barge-in OFF or wear headphones, otherwise the agent interrupts itself.'
+          );
 
           const inputCtx = new AudioContext({ sampleRate: 16000 });
           inputAudioCtxRef.current = inputCtx;
-
           const source = inputCtx.createMediaStreamSource(stream);
-          const processor = inputCtx.createScriptProcessor(4096, 1, 1);
-          scriptProcessorRef.current = processor;
 
-          processor.onaudioprocess = (e) => {
-            if (isMicMutedRef.current) return;
-            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-              const inputChannel = e.inputBuffer.getChannelData(0);
-              const base64Pcm = float32ToPcm16Base64(inputChannel);
-              wsRef.current.send(JSON.stringify({ audio: base64Pcm }));
-            }
-          };
-
-          source.connect(processor);
-          processor.connect(inputCtx.destination);
+          const workletUrl = URL.createObjectURL(
+            new Blob([CAPTURE_WORKLET_SOURCE], { type: 'text/javascript' })
+          );
+          try {
+            await inputCtx.audioWorklet.addModule(workletUrl);
+            const node = new AudioWorkletNode(inputCtx, 'growpilot-pcm16-capture', {
+              numberOfOutputs: 1,
+              outputChannelCount: [1],
+            });
+            node.port.onmessage = (event: MessageEvent<Float32Array>) =>
+              forwardMicFrame(event.data);
+            source.connect(node);
+            node.connect(inputCtx.destination);
+            captureNodeRef.current = node;
+          } catch {
+            // No AudioWorklet (plain-HTTP origin on an old browser): ScriptProcessor still
+            // streams, just with main-thread frame drops that the recognizer hears as gaps.
+            const processor = inputCtx.createScriptProcessor(4096, 1, 1);
+            processor.onaudioprocess = (event) =>
+              forwardMicFrame(event.inputBuffer.getChannelData(0));
+            source.connect(processor);
+            processor.connect(inputCtx.destination);
+            scriptProcessorRef.current = processor;
+          } finally {
+            URL.revokeObjectURL(workletUrl);
+          }
         } catch {
           appendTranscript(
             'system',
-            'Microphone access unavailable or declined — Connected in Live Voice + Quick Prompt mode (you can still hear real-time 24kHz voice responses from gemini-3.1-flash-live-preview using the prompt buttons below).'
+            'Microphone access unavailable or declined — Live Voice + Quick Prompt mode is still usable: the prompt buttons below send text and you still hear the real-time 24kHz voice reply.'
           );
         }
       };
@@ -230,6 +314,7 @@ export const LiveVoiceAgentPanel: React.FC<LiveVoiceAgentPanelProps> = ({
           const msg = JSON.parse(event.data);
           if (msg.type === 'connected') {
             setCallState('connected');
+            setLiveModelLabel(String(msg.model));
             appendTranscript(
               'system',
               `Connected to ${msg.model} (Voice: ${msg.voice}). Speak into your microphone or click a quick voice prompt.`
@@ -238,6 +323,15 @@ export const LiveVoiceAgentPanel: React.FC<LiveVoiceAgentPanelProps> = ({
             playPcm24kChunk(msg.audio);
           } else if (msg.type === 'interrupted') {
             stopPlaybackQueue();
+          } else if (msg.type === 'turn_complete') {
+            // This reply is finished: the next assistant delta opens a new bubble.
+            pendingAssistantBreakRef.current = true;
+          } else if (msg.type === 'usage') {
+            setLastCallUsage({
+              audioSecondsIn: msg.audioSecondsIn,
+              audioSecondsOut: msg.audioSecondsOut,
+              costUsd: msg.costUsd,
+            });
           } else if (msg.type === 'transcript' && msg.text) {
             appendTranscript(msg.role === 'user' ? 'user' : 'assistant', msg.text);
           } else if (msg.type === 'crm_booking' && msg.booking) {
@@ -283,7 +377,12 @@ export const LiveVoiceAgentPanel: React.FC<LiveVoiceAgentPanelProps> = ({
   const stopLiveVoiceCall = () => {
     cleanupSession();
     setCallState('idle');
-    appendTranscript('system', 'Live voice session ended.');
+    appendTranscript(
+      'system',
+      lastCallUsage
+        ? `Live voice session ended. Measured ${lastCallUsage.audioSecondsIn}s of your speech + ${lastCallUsage.audioSecondsOut}s of agent audio ≈ $${lastCallUsage.costUsd.toFixed(4)} billed.`
+        : 'Live voice session ended.'
+    );
   };
 
   const toggleMute = () => {
@@ -292,9 +391,21 @@ export const LiveVoiceAgentPanel: React.FC<LiveVoiceAgentPanelProps> = ({
     setIsMicMuted(nextMuted);
   };
 
+  const toggleBargeIn = () => {
+    const next = !allowBargeInRef.current;
+    allowBargeInRef.current = next;
+    setAllowBargeIn(next);
+    appendTranscript(
+      'system',
+      next
+        ? 'Barge-in ON — your mic keeps streaming while the agent speaks. Works on headphones; on speakers the agent will interrupt itself.'
+        : 'Barge-in OFF — mic uploads pause while the agent is talking, so it never hears itself.'
+    );
+  };
+
   const sendLiveVoicePrompt = (textPrompt: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    appendTranscript('user', textPrompt);
+    appendTranscript('user', textPrompt, { newTurn: true });
     wsRef.current.send(JSON.stringify({ text: textPrompt }));
   };
 
@@ -306,9 +417,9 @@ export const LiveVoiceAgentPanel: React.FC<LiveVoiceAgentPanelProps> = ({
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
           <div className="flex items-center gap-2 text-xs text-slate-500">
-            <span className="font-mono font-semibold text-teal-800">gemini-3.1-flash-live-preview</span>
+            <span className="font-mono font-semibold text-teal-800">{liveModelLabel}</span>
             <span aria-hidden="true">·</span>
-            <span>16kHz PCM Mic Input → 24kHz Gapless Audio Output</span>
+            <span>16kHz PCM Mic Input → 24kHz Audio Output (echo-cancelled)</span>
             <span aria-hidden="true">·</span>
             <span>Live Function Calling to CRM</span>
           </div>
@@ -426,12 +537,35 @@ export const LiveVoiceAgentPanel: React.FC<LiveVoiceAgentPanelProps> = ({
           ))}
         </div>
 
-        <span className="text-xs font-mono tabular-nums text-slate-600">
-          Status:{' '}
-          <strong className={callState === 'connected' ? 'text-emerald-700' : 'text-slate-800'}>
-            {callState.toUpperCase()}
-          </strong>
-        </span>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <label
+            className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-600 cursor-pointer select-none"
+            title="Off = the mic stops uploading while the agent talks, so it cannot hear itself and cut itself off. Turn on only with headphones."
+          >
+            <input
+              type="checkbox"
+              checked={allowBargeIn}
+              onChange={toggleBargeIn}
+              className="w-3.5 h-3.5 accent-teal-700"
+            />
+            Barge-in
+            <span className="text-slate-400">(headphones only)</span>
+          </label>
+
+          {lastCallUsage && (
+            <span className="text-xs font-mono tabular-nums text-slate-600">
+              billed so far ${lastCallUsage.costUsd.toFixed(4)} · {lastCallUsage.audioSecondsOut}s
+              agent audio
+            </span>
+          )}
+
+          <span className="text-xs font-mono tabular-nums text-slate-600">
+            Status:{' '}
+            <strong className={callState === 'connected' ? 'text-emerald-700' : 'text-slate-800'}>
+              {callState.toUpperCase()}
+            </strong>
+          </span>
+        </div>
       </div>
 
       {/* Live Voice Transcript Stream */}

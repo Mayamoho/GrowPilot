@@ -13,6 +13,8 @@ import {
   LiveServerMessage,
   Modality,
   Type,
+  StartSensitivity,
+  EndSensitivity,
   type FunctionDeclaration,
 } from '@google/genai';
 import {
@@ -27,6 +29,9 @@ import {
   isPrivateOrLoopbackIp,
   MODEL_TIERS,
   LIVE_API_MODEL_ID,
+  LIVE_AUDIO_USD_PER_MINUTE,
+  LIVE_PCM_BYTES_PER_SECOND,
+  LIVE_TOKENS_PER_MINUTE,
   type GenerationSource,
   type ModelTierId,
   type FaqItem,
@@ -51,8 +56,8 @@ const __dirname = path.dirname(__filename);
 function resolveApiModelId(tier: ModelTierId): string {
   const overrides: Partial<Record<ModelTierId, string | undefined>> = {
     'ollama-llama3.2-3b': process.env.OLLAMA_MODEL?.trim(),
-    'gemini-3.1-flash-lite': process.env.GEMINI_MODEL_FLASH_LITE?.trim(),
-    'gemini-3.5-flash': process.env.GEMINI_MODEL_FLASH?.trim(),
+    'gemini-3.5-flash-lite': process.env.GEMINI_MODEL_FLASH_LITE?.trim(),
+    'gemini-3.8-flash': process.env.GEMINI_MODEL_FLASH?.trim(),
   };
   return overrides[tier] || MODEL_TIERS[tier].apiModelId;
 }
@@ -209,7 +214,10 @@ const bookDiscoveryCallDeclaration: FunctionDeclaration = {
         description: 'Confirmed day and time slot in BDT (e.g., Tue 22 Oct, 4:00 PM BDT).',
       },
     },
-    required: ['leadName', 'businessType', 'monthlyBudgetUsd', 'needSummary', 'preferredSlot'],
+    // preferredSlot and needSummary stay optional on purpose: resolveLiveBooking falls back to
+    // the next free slot, so requiring them forces one more question and the call often ends
+    // before the lead is ever written to the CRM.
+    required: ['leadName', 'businessType', 'monthlyBudgetUsd'],
   },
 };
 
@@ -639,7 +647,7 @@ async function startServer() {
       industry = 'B2B Services & Automation',
       rawContent = '',
       icpThreshold = 60,
-      modelPreference = 'gemini-3.5-flash',
+      modelPreference = 'gemini-3.8-flash',
       bypassCache = false,
     } = req.body || {};
 
@@ -650,10 +658,10 @@ async function startServer() {
 
     const selectedTier: ModelTierId =
       modelPreference === 'ollama-llama3.2-3b' ||
-      modelPreference === 'gemini-3.1-flash-lite' ||
-      modelPreference === 'gemini-3.5-flash'
+      modelPreference === 'gemini-3.5-flash-lite' ||
+      modelPreference === 'gemini-3.8-flash'
         ? modelPreference
-        : 'gemini-3.5-flash';
+        : 'gemini-3.8-flash';
 
     const cacheKey = normalizeCacheKey(
       `${companyName}_${sourceUrl}_${rawContent.slice(0, 160)}_${icpThreshold}`
@@ -718,7 +726,7 @@ async function startServer() {
 
     if (icpEval.qualificationStatus === 'SKIPPED_LOW_ICP') {
       const skippedCost = calculateRunCost({
-        modelUsed: 'gemini-3.1-flash-lite',
+        modelUsed: 'gemini-3.5-flash-lite',
         cacheHit: false,
         inputTokens: Math.min(45, stripped.cleanedEstimatedTokens),
         outputTokens: 15,
@@ -904,11 +912,11 @@ async function startServer() {
               },
             },
             'gtm',
-            { fallbackModel: resolveApiModelId('gemini-3.1-flash-lite') }
+            { fallbackModel: resolveApiModelId('gemini-3.5-flash-lite') }
           );
 
           if (result.degraded) {
-            billedTier = 'gemini-3.1-flash-lite';
+            billedTier = 'gemini-3.5-flash-lite';
             notes.push(
               `${resolveApiModelId(selectedTier)} is out of quota for this key; copy was generated and billed by ${result.model}.`
             );
@@ -1041,7 +1049,7 @@ async function startServer() {
     const {
       message = '',
       sessionId = 'default-session',
-      modelPreference = 'gemini-3.1-flash-lite',
+      modelPreference = 'gemini-3.5-flash-lite',
       channel = 'WhatsApp Business',
     } = req.body || {};
 
@@ -1052,10 +1060,10 @@ async function startServer() {
 
     const selectedTier: ModelTierId =
       modelPreference === 'ollama-llama3.2-3b' ||
-      modelPreference === 'gemini-3.1-flash-lite' ||
-      modelPreference === 'gemini-3.5-flash'
+      modelPreference === 'gemini-3.5-flash-lite' ||
+      modelPreference === 'gemini-3.8-flash'
         ? modelPreference
-        : 'gemini-3.1-flash-lite';
+        : 'gemini-3.5-flash-lite';
 
     const history = sessionHistoryStore.get(sessionId) || [];
     const userTurn: ChatTurn = {
@@ -1211,10 +1219,10 @@ async function startServer() {
                 },
               },
               'agent',
-              { fallbackModel: resolveApiModelId('gemini-3.1-flash-lite') }
+              { fallbackModel: resolveApiModelId('gemini-3.5-flash-lite') }
             );
             if (result.degraded) {
-              billedTier = 'gemini-3.1-flash-lite';
+              billedTier = 'gemini-3.5-flash-lite';
               modelError = `${resolveApiModelId(selectedTier)} is out of quota for this key; reply generated and billed by ${result.model}.`;
             }
             if (result.text) {
@@ -1378,6 +1386,26 @@ async function startServer() {
 
     let liveSession: Awaited<ReturnType<typeof ai.live.connect>> | null = null;
 
+    // Live audio is billed per minute, so the session counts bytes in both directions and
+    // prices them with the published rates instead of the old hardcoded per-call guess.
+    const base64Bytes = (s: string) =>
+      Math.floor((s.length * 3) / 4) - (s.endsWith('==') ? 2 : s.endsWith('=') ? 1 : 0);
+    let outAudioBytes = 0;
+    let inAudioBytes = 0;
+    const audioSecondsOut = () => outAudioBytes / LIVE_PCM_BYTES_PER_SECOND.output;
+    const audioSecondsIn = () => inAudioBytes / LIVE_PCM_BYTES_PER_SECOND.input;
+    const measuredLiveCostUsd = () =>
+      Math.round(
+        ((audioSecondsOut() / 60) * LIVE_AUDIO_USD_PER_MINUTE.output +
+          (audioSecondsIn() / 60) * LIVE_AUDIO_USD_PER_MINUTE.input) *
+          1e7
+      ) / 1e7;
+    const measuredLiveTokens = () =>
+      Math.round(
+        (audioSecondsIn() / 60) * LIVE_TOKENS_PER_MINUTE.input +
+          (audioSecondsOut() / 60) * LIVE_TOKENS_PER_MINUTE.output
+      );
+
     const sessionPromise = ai.live.connect({
       model: LIVE_MODEL_ID,
       config: {
@@ -1387,11 +1415,36 @@ async function startServer() {
             prebuiltVoiceConfig: { voiceName },
           },
         },
-        inputAudioTranscription: {},
+        // Callers speak Banglish as often as English; without the hint the recognizer
+        // returns noise like "Dicky" for a Bengali sentence, and the agent answers a
+        // question that was never asked.
+        inputAudioTranscription: { languageCodes: ['en', 'bn-BD'] },
         outputAudioTranscription: {},
+        // Laptop speakers are picked up by the mic. Default VAD is HIGH sensitivity, so the
+        // agent's own voice is read back as the caller speaking, which interrupts the reply
+        // mid-sentence. Lowering start sensitivity and lengthening the silence window makes
+        // real barge-in still work while residual echo mostly does not.
+        realtimeInputConfig: {
+          automaticActivityDetection: {
+            startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_LOW,
+            endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_LOW,
+            prefixPaddingMs: 300,
+            silenceDurationMs: 800,
+          },
+        },
         tools: [{ functionDeclarations: [bookDiscoveryCallDeclaration] }],
         systemInstruction:
-          'You are GrowPilot, the 24/7 Voice Qualification and Appointment Booking AI Agent. Speak naturally, concisely, and warmly in 1-3 short sentences. Key facts: Our 24/7 WhatsApp & Web AI Agent + n8n automation package starts at $500/month (or 25,000 BDT/month for local Bangladesh clinics and businesses) and deploys in 48 hours on Docker. Ask the caller what their business does and their approximate monthly budget. When they share their business need and a budget, call the book_discovery_call tool to log their lead and book a discovery slot.',
+          'You are GrowPilot, the 24/7 Voice Qualification and Appointment Booking AI Agent. ' +
+          'Speak naturally and warmly. Keep every reply to ONE short sentence of at most 14 words, ' +
+          'because long replies get cut off. Ask for only the single piece of information that is ' +
+          'still missing, and NEVER re-ask something the caller already answered earlier in this call. ' +
+          'If the caller speaks Bengali or Banglish, reply in the language they used. ' +
+          'Key facts: Our 24/7 WhatsApp & Web AI Agent + n8n automation package starts at $500/month ' +
+          '(or 25,000 BDT/month for local Bangladesh clinics and businesses) and deploys in 48 hours on Docker. ' +
+          'First find out what the caller\'s business does, then their approximate monthly budget. ' +
+          'As soon as you know the business and a budget, call book_discovery_call immediately — omit ' +
+          'preferredSlot if no time was mentioned, the CRM will take the next free slot and you will ' +
+          'read the booked time back to the caller.',
       },
       callbacks: {
         onopen: () => {
@@ -1408,22 +1461,18 @@ async function startServer() {
         onmessage: (message: LiveServerMessage) => {
           if (clientWs.readyState !== WebSocket.OPEN) return;
 
+          // With responseModalities:[AUDIO] the spoken words never arrive in
+          // modelTurn.parts[].text (probed against the API: 0 characters, everything in
+          // outputTranscription), so this loop forwards audio only and the transcript keeps
+          // a single source instead of risking a doubled-up caption.
           const parts = message.serverContent?.modelTurn?.parts || [];
           for (const part of parts) {
             if (part.inlineData?.data) {
+              outAudioBytes += base64Bytes(part.inlineData.data);
               clientWs.send(
                 JSON.stringify({
                   type: 'audio',
                   audio: part.inlineData.data,
-                })
-              );
-            }
-            if (part.text) {
-              clientWs.send(
-                JSON.stringify({
-                  type: 'transcript',
-                  role: 'assistant',
-                  text: part.text,
                 })
               );
             }
@@ -1454,6 +1503,22 @@ async function startServer() {
                 text: outputTranscript,
               })
             );
+          }
+
+          // turnComplete closes the response turn (observed on the wire right after the last
+          // audio chunk), so the UI starts a fresh assistant bubble for the next reply.
+          // Cumulative audio usage rides along to make the call cost visible during the call.
+          if (message.serverContent?.turnComplete) {
+            clientWs.send(
+              JSON.stringify({
+                type: 'usage',
+                audioSecondsIn: Math.round(audioSecondsIn()),
+                audioSecondsOut: Math.round(audioSecondsOut()),
+                tokensUsed: measuredLiveTokens(),
+                costUsd: measuredLiveCostUsd(),
+              })
+            );
+            clientWs.send(JSON.stringify({ type: 'turn_complete' }));
           }
 
           if (message.serverContent?.interrupted) {
@@ -1487,10 +1552,8 @@ async function startServer() {
                   leadScore: budgetNum >= 500 ? 'HOT_BOOKED' : 'WARM_NURTURE',
                   bookedSlot: resolvedSlot,
                   modelUsed: LIVE_MODEL_ID,
-                  // Live audio is billed per minute upstream and not metered per turn here;
-                  // these are order-of-magnitude estimates, not measured usage.
-                  tokensUsed: 320,
-                  costUsd: 0.00019,
+                  tokensUsed: measuredLiveTokens(),
+                  costUsd: measuredLiveCostUsd(),
                   createdAt: 'Live Voice Call',
                 };
 
@@ -1576,7 +1639,26 @@ async function startServer() {
           }
         },
         onclose: () => {
+          // One voice call, one metering entry: seconds actually streamed in both directions.
+          const callCostUsd = measuredLiveCostUsd();
+          const callTokens = measuredLiveTokens();
+          if (callCostUsd > 0) {
+            telemetryLedger.totalTokensUsed += callTokens;
+            telemetryLedger.totalCostUsd = Number(
+              (telemetryLedger.totalCostUsd + callCostUsd).toFixed(7)
+            );
+            persistState();
+          }
           if (clientWs.readyState === WebSocket.OPEN) {
+            clientWs.send(
+              JSON.stringify({
+                type: 'usage',
+                audioSecondsIn: Math.round(audioSecondsIn()),
+                audioSecondsOut: Math.round(audioSecondsOut()),
+                tokensUsed: callTokens,
+                costUsd: callCostUsd,
+              })
+            );
             clientWs.send(JSON.stringify({ type: 'closed' }));
           }
         },
@@ -1608,6 +1690,7 @@ async function startServer() {
         sessionPromise
           .then((sess) => {
             if (msg.audio) {
+              inAudioBytes += base64Bytes(String(msg.audio));
               sess.sendRealtimeInput({
                 audio: {
                   data: msg.audio,

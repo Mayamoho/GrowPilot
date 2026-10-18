@@ -206,7 +206,7 @@ export default function App() {
 
     if (icpEval.qualificationStatus === 'SKIPPED_LOW_ICP') {
       const lowCostMetrics = calculateRunCost({
-        modelUsed: 'gemini-3.1-flash-lite',
+        modelUsed: 'gemini-3.5-flash-lite',
         cacheHit: false,
         inputTokens: Math.min(80, stripped.cleanedEstimatedTokens),
         outputTokens: 18,

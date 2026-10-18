@@ -49,7 +49,7 @@ export const GtmStudioView: React.FC<GtmStudioViewProps> = ({
   const [industry, setIndustry] = useState<string>(defaultPreset.industry);
   const [rawContent, setRawContent] = useState<string>(defaultPreset.rawHtmlSample);
   const [icpThreshold, setIcpThreshold] = useState<number>(60);
-  const [modelPreference, setModelPreference] = useState<ModelTierId>('gemini-3.5-flash');
+  const [modelPreference, setModelPreference] = useState<ModelTierId>('gemini-3.8-flash');
   const [activeOutputTab, setActiveOutputTab] = useState<
     'cold-email' | 'whatsapp' | 'social-post' | 'groundedness'
   >('cold-email');

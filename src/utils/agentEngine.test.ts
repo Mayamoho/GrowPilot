@@ -63,7 +63,7 @@ test('matchFaqCache hits Layer 0 zero-token cache for FAQ questions and bypasses
 
 test('calculateRunCost returns $0.00 for Layer 0 cache hits and Ollama local models', () => {
   const cachedCost = calculateRunCost({
-    modelUsed: 'gemini-3.1-flash-lite',
+    modelUsed: 'gemini-3.5-flash-lite',
     cacheHit: true,
     inputTokens: 450,
     outputTokens: 180,
@@ -150,7 +150,7 @@ test('formatGtmLeadsCsv exports company name, industry, and ICP match score prop
       qualificationStatus: 'QUALIFIED_OUTBOUND',
       sourceUrl: 'https://dentacare-dhaka.example.com',
       tokensSavedPct: 37.6,
-      modelLabel: 'Gemini 3.5 Flash',
+      modelLabel: 'Gemini 3.8 Flash',
       cacheHit: false,
       estimatedCostUsd: 0.000185,
       summary: '12-chair specialist clinic in Dhaka.',
@@ -168,14 +168,14 @@ test('formatGtmLeadsCsv exports company name, industry, and ICP match score prop
 
 test('calculateRunCost bills nothing when no model was actually called', () => {
   const templateRun = calculateRunCost({
-    modelUsed: 'gemini-3.5-flash',
+    modelUsed: 'gemini-3.8-flash',
     cacheHit: false,
     inputTokens: 400,
     outputTokens: 200,
     modelCalled: false,
   });
   const llmRun = calculateRunCost({
-    modelUsed: 'gemini-3.5-flash',
+    modelUsed: 'gemini-3.8-flash',
     cacheHit: false,
     inputTokens: 400,
     outputTokens: 200,

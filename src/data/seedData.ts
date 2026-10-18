@@ -117,7 +117,7 @@ export const PRESET_PROSPECTS: GtmProspectPreset[] = [
       <main>
         <h1>Cutting Production AI Agent Costs by 92% with Layer 0 Caching and Smallest-Model Routing</h1>
         <p>In production WhatsApp and web support agents, 64% of incoming user messages ask repetitive questions about pricing, working hours, integrations, and onboarding timelines.</p>
-        <p>By placing a normalized Layer 0 semantic cache in front of Gemini 3.1 Flash-Lite and local Ollama Llama 3.2 3B models, engineering teams reduce median response latency from 1,450ms to 4ms while spending $0.00 on cached turns.</p>
+        <p>By placing a normalized Layer 0 semantic cache in front of Gemini 3.5 Flash-Lite and local Ollama Llama 3.2 3B models, engineering teams reduce median response latency from 1,450ms to 4ms while spending $0.00 on cached turns.</p>
         <p>Furthermore, stripping HTML DOM boilerplate before scraping prospect websites removes 78% of non-content tokens and prevents context window pollution during B2B lead enrichment.</p>
       </main>
       <footer>Subscribe to our RSS feed. Cookie preferences.</footer>
@@ -164,7 +164,7 @@ export const INITIAL_FAQS: FaqItem[] = [
     question: 'How do you keep LLM API token costs so low without losing quality?',
     keywords: ['token', 'cache', 'caching', 'cheap', 'cost', 'efficient', 'smallest model', 'ollama', 'flash', 'save'],
     answer:
-      'We use a 4-stage efficiency pipeline: (1) Layer 0 normalized FAQ & URL cache (0 tokens, <5ms latency), (2) HTML boilerplate stripping that cuts ~80% of scraped input tokens, (3) a 6-turn sliding conversation window, and (4) routing simple tasks to Ollama Llama 3.2 3B ($0.00) or Gemini 3.1 Flash-Lite ($0.075/1M tokens).',
+      'We use a 4-stage efficiency pipeline: (1) Layer 0 normalized FAQ & URL cache (0 tokens, <5ms latency), (2) HTML boilerplate stripping that cuts ~80% of scraped input tokens, (3) a 6-turn sliding conversation window, and (4) routing simple tasks to Ollama Llama 3.2 3B ($0.00) or Gemini 3.5 Flash-Lite ($0.30/1M tokens).',
   },
   {
     id: 'faq-docker-vps',
@@ -219,7 +219,7 @@ export const INITIAL_GTM_RECORDS: GtmPipelineRecord[] = [
       coldEmailBody: `Hi DentaCare team,\n\nNoticed your 12-chair clinic serves 450 patients monthly and invests $1,400/month on paid ads, but inquiries after 8 PM wait until the next afternoon for manual reception follow-up.\n\nWe deploy a cached 24/7 WhatsApp Business AI Agent connected to n8n and Google Sheets that answers implant & aligner FAQs (including your 1,000 BDT consultation fee) and books chair slots automatically in under 3 seconds.\n\nOpen to a 10-minute walkthrough this week?\n\nBest,\nGrowPilot Automation Team`,
       whatsappOpener: `Hello DentaCare team! We noticed your clinic runs $1,400/mo in ads for your 12-chair center, but after-8 PM WhatsApp leads wait until the next day. We built a 24/7 WhatsApp AI Agent + n8n booking workflow that qualifies implant patients and books your 1,000 BDT consultations automatically. Want me to send a 60-sec live demo link?`,
       followUpMessage: `Hi DentaCare team — following up in case after-hours WhatsApp booking automation is a priority this quarter. Happy to share a live sandbox tailored to your 12-chair implant clinic.`,
-      socialMediaPost: `Why clinics lose 35%+ of paid ad leads after 8 PM (and how a $0.0002 AI agent fixes it):\n\nTake a 12-chair dental center serving 450 patients/month and spending $1,400/mo on ads. When a patient messages on WhatsApp at 9:30 PM asking about aligners or a 1,000 BDT consultation, waiting until the next afternoon kills conversion.\n\nBy pairing a Layer 0 FAQ cache with Gemini 3.1 Flash-Lite + n8n -> Google Sheets, every patient gets an instant, grounded reply and booked slot 24/7.`,
+      socialMediaPost: `Why clinics lose 35%+ of paid ad leads after 8 PM (and how a $0.0002 AI agent fixes it):\n\nTake a 12-chair dental center serving 450 patients/month and spending $1,400/mo on ads. When a patient messages on WhatsApp at 9:30 PM asking about aligners or a 1,000 BDT consultation, waiting until the next afternoon kills conversion.\n\nBy pairing a Layer 0 FAQ cache with Gemini 3.5 Flash-Lite + n8n -> Google Sheets, every patient gets an instant, grounded reply and booked slot 24/7.`,
     },
     groundednessReport: {
       passed: true,
@@ -260,8 +260,8 @@ export const INITIAL_GTM_RECORDS: GtmPipelineRecord[] = [
       ],
     },
     costMetrics: {
-      modelUsed: 'gemini-3.5-flash',
-      modelLabel: 'Gemini 3.5 Flash',
+      modelUsed: 'gemini-3.8-flash',
+      modelLabel: 'Gemini 3.8 Flash',
       cacheHit: false,
       inputTokens: 171,
       outputTokens: 265,
@@ -284,7 +284,7 @@ export const INITIAL_CRM_BOOKINGS: CrmBookingRecord[] = [
     monthlyBudgetUsd: 650,
     leadScore: 'HOT_BOOKED',
     bookedSlot: 'Sun 19 Oct, 11:30 AM',
-    modelUsed: 'Gemini 3.1 Flash-Lite',
+    modelUsed: 'Gemini 3.5 Flash-Lite',
     tokensUsed: 184,
     costUsd: 0.000038,
     createdAt: '11:15 AM',

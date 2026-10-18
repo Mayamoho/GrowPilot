@@ -23,8 +23,8 @@ export const CostBenchmarkView: React.FC = () => {
 
   const tierOrder: ModelTierId[] = [
     'ollama-llama3.2-3b',
-    'gemini-3.1-flash-lite',
-    'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.8-flash',
     'frontier-baseline',
   ];
 
@@ -188,7 +188,7 @@ export const CostBenchmarkView: React.FC = () => {
               Side-by-Side Model Tier Economics ({finalModelCalls.toLocaleString()} Active Calls/Mo)
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Compare self-hosted Ubuntu 24.04 open-source models (Ollama Llama 3.2 3B) vs. Gemini 3.1 Flash-Lite vs. unoptimized frontier baseline.
+              Compare self-hosted Ubuntu 24.04 open-source models (Ollama Llama 3.2 3B) vs. Gemini 3.5 Flash-Lite vs. unoptimized frontier baseline.
             </p>
 
             <div className="overflow-x-auto mt-4">
@@ -244,7 +244,7 @@ export const CostBenchmarkView: React.FC = () => {
 
           <div className="mt-4 p-3.5 bg-teal-50/70 border border-teal-200 rounded-lg text-xs text-teal-950">
             <span className="font-semibold">What this means in practice: </span>
-            Running <span className="font-mono font-semibold">gemini-3.1-flash-lite</span> or local{' '}
+            Running <span className="font-mono font-semibold">gemini-3.5-flash-lite</span> or local{' '}
             <span className="font-mono font-semibold">Ollama llama3.2:3b</span> behind a {faqCacheHitPct}% FAQ cache handles{' '}
             <span className="font-mono font-semibold">{monthlyConversations.toLocaleString()}</span> monthly customer conversations for under{' '}
             <span className="font-mono font-semibold">$0.50/month</span> instead of{' '}
