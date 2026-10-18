@@ -281,6 +281,9 @@ Live API code.
    - **Output Directory:** `dist` (set by `vercel.json`)
    - **Install Command:** `npm install --legacy-peer-deps`
    - **Environment Variables:** `GEMINI_API_KEY` (Secret) — the Function reads it server-side, never the browser
+   - **`ALLOWED_ORIGINS` (strongly recommended):** comma-separated browser origins allowed to call `/api/*`
+     cross-origin. Left empty, any website can spend your `GEMINI_API_KEY` from a visitor's browser, so set
+     it to e.g. `https://gtm.yourdomain.xyz,https://agent.yourdomain.xyz`. Same-origin traffic never needs it.
 3. **Two routing details that are easy to get wrong:**
    - Vercel turns `api/[...path].mjs` into a **single-segment** route, so `/api/agent/chat` and
      `/api/gtm/analyze` 404 at the edge unless `vercel.json` also rewrites `/api/:path*` → `/api/[...path]`.
