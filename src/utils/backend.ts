@@ -1,8 +1,8 @@
 /**
- * A static host (Vercel) serves this UI but cannot run `/api/*` or proxy the `/live`
- * WebSocket, so every call below resolves to an explicit backend origin instead of
- * the page's own origin. Order: localStorage override, then VITE_BACKEND_URL, then
- * same-origin (which is what a local `npm run dev` / the Docker agent wants).
+ * Every call below resolves to a backend origin: same-origin is correct when the host runs the
+ * agent (local `npm run dev`, the Docker container, or the Vercel Function that serves `/api/*`
+ * and `/live`), and the override is for a UI deployed apart from its server.
+ * Order: localStorage override, then VITE_BACKEND_URL, then same-origin.
  */
 const STORAGE_KEY = 'growpilot.backendOrigin';
 

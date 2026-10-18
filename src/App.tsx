@@ -690,8 +690,9 @@ export default function App() {
                 </button>
               </div>
               <p className="text-[11px] text-slate-500 sm:ml-auto sm:max-w-[16rem] sm:text-right">
-                Static hosts (Vercel) serve the UI only — point this page at a running GrowPilot
-                agent for real models, live voice and n8n. Saved in this browser.
+                Leave this blank for same-origin: the hosted app runs the agent as a Vercel
+                Function. Point it at your own server to use local Ollama and a private n8n. Saved
+                in this browser.
               </p>
             </div>
           )}

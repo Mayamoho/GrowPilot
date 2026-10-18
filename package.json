@@ -7,6 +7,8 @@
     "dev": "tsx server.ts",
     "start": "tsx server.ts",
     "build": "vite build",
+    "build:function": "esbuild server.ts --bundle --platform=node --format=esm --external:vite --banner:js=\"import{createRequire as __cr}from'module';const require=__cr(import.meta.url);\" --outfile=\"api/[...path].mjs\"",
+    "vercel-build": "npm run build && npm run build:function",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",

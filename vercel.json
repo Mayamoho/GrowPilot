@@ -1,7 +1,22 @@
 {
+  "buildCommand": "npm run vercel-build",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/[...path].mjs": {
+      "maxDuration": 300
+    }
+  },
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/live",
+      "destination": "/api/[...path]"
+    },
+    {
+      "source": "/api/:path*",
+      "destination": "/api/[...path]"
+    },
+    {
+      "source": "/((?!api/)[^.]*)",
       "destination": "/index.html"
     }
   ]

@@ -31,18 +31,16 @@ You can test the application right now without installing anything:
 
 > **How the subdomains work:** All three URLs point to the same codebase. On page load, `src/App.tsx` checks `window.location.hostname`: if the hostname starts with `agent.`, it opens the **24/7 FAQ & Booking Agent** tab automatically; otherwise it opens the **GTM Pipeline** tab. You can also link directly to any tab with `?tab=gtm-studio`, `?tab=whatsapp-agent`, or `?tab=cost-lab`.
 
-> ### ⚠️ What the Vercel URLs are — and what they are not
-> Those three URLs serve `npm run build` output: **static files only**. Vercel is not running `server.ts`, so the deployed demo is the browser fallback path in `src/App.tsx`.
+> ### ⚠️ What the Vercel URLs run — and what still needs your own machine
+> Those three URLs serve the `npm run build` frontend **plus** the agent itself: `vercel.json` builds `api/[...path].mjs` (esbuild bundles `server.ts` into one Node.js Function, `maxDuration: 300`), and rewrites send `/api/*` and the `/live` WebSocket upgrade to it. Vercel Function WebSockets are in public beta, so live voice works on the hosted URL — verified with a real `gemini-3.8-live` turn that wrote a CRM booking.
 >
-> | Works on the Vercel demo | Only works with the Node/Docker backend |
+> | Works on the hosted app | Needs your own server (set the **Backend:** pill to that origin) |
 > |---|---|
-> | HTML boilerplate stripper, Layer 0 FAQ & GTM result caches, ICP gate, 5-layer groundedness verifier, token/cost math, CSV export, FAQ rule editor | Real model calls (Gemini or local Ollama) |
-> | Lead qualification logic, deterministic outreach copy, cost telemetry | Live voice agent (`/live` WebSocket → Gemini Live API + `book_discovery_call`) |
-> | | Prospect URL fetching (server-side, SSRF-guarded) |
-> | | n8n webhook delivery (`lead.qualified`, `gtm.lead_generated`) |
-> | | CRM/FAQ/GTM persistence across restarts (`.data/growpilot-state.json`) |
+> | Everything above, plus Gemini calls (`3.5 Flash-Lite` / `3.8 Flash`), live voice booking, prospect URL fetching, in-call cost metering | Local Ollama tier (`llama3.2:3b` at `$0.00`) — no Ollama is reachable from a Function |
+> | | n8n delivery — a `127.0.0.1` webhook is unreachable from Vercel, so hosted bookings are recorded with `automation: not_configured` |
+> | | CRM/FAQ/GTM persistence across instances — a Function's disk is read-only and its `/tmp` is per-instance |
 >
-> On the static demo every run is labelled **`Deterministic template (no model billed)`** with a `$0.00` cost, and the agent panel reports **`N8N_WEBHOOK_URL NOT CONFIGURED`** — because no model and no n8n are actually being called. Run `npm run dev` or `docker compose up` with a real `GEMINI_API_KEY` to exercise the full agent (see [Step-by-Step Local Setup](#step-by-step-local-setup--installation)).
+> Run `npm run dev` or `docker compose up` with a real `GEMINI_API_KEY` for all four of those (see [Step-by-Step Local Setup](#step-by-step-local-setup--installation)).
 
 ---
 
@@ -260,7 +258,7 @@ GrowPilot copies that `message` + `hint` into the `[n8n]` log line and into `aut
 
 **Booking slots** are computed by `nextAvailableSlot()` — the next free 30-minute weekday slot in BDT business hours, advancing past booked capacity. Nothing queries a real Google Calendar; to make the slot a real calendar event, add a *Google Calendar* node downstream of the webhook in n8n.
 
-**Persistence**: FAQ rules, CRM bookings, GTM records and the telemetry ledger are written to `.data/growpilot-state.json` (Docker: the `growpilot_data` volume at `/data`) and restored on boot, so captured leads survive a restart. The static Vercel deployment has no server, so it runs the same engine in the browser with an in-memory cache only.
+**Persistence**: FAQ rules, CRM bookings, GTM records and the telemetry ledger are written to `.data/growpilot-state.json` (Docker: the `growpilot_data` volume at `/data`) and restored on boot, so captured leads survive a restart. On Vercel the same store falls back to `/tmp/growpilot-state.json` (a Function's working directory is read-only), which is per-instance and ephemeral — point `GROWPILOT_STATE_FILE` at real storage, or run the Docker backend, if hosted leads must not vanish.
 
 **Security note on the scraper**: `/api/gtm/analyze` fetches user-supplied URLs. It rejects non-HTTP(S) schemes, resolves the hostname and refuses any address in loopback, RFC1918, link-local (including the `169.254.169.254` cloud metadata range), CGNAT or IPv6 unique-local space, follows redirects manually with the same check on every hop, and caps the response at 400 KB. Without this, the endpoint was an open proxy into the Docker network — `n8n:5678` sits on that network.
 
@@ -268,31 +266,45 @@ GrowPilot copies that `message` + `hint` into the `[n8n]` log line and into `aut
 
 ## Deploying on Vercel & Linking Subdomains
 
-GrowPilot works both when connected to the Node/Docker Express server **and** when deployed as a static app on Vercel (when `/api/*` is not present on a static host, `src/App.tsx` automatically executes the same `agentEngine` functions directly in the browser).
-
-> Static deployment is a genuine demo of the deterministic engine, not the full agent: no model is billed, no prospect URL is fetched, no n8n webhook fires, and the live-voice tab cannot connect (it needs the server's `/live` WebSocket). See [What the Vercel URLs are — and what they are not](#-what-the-vercel-urls-are--and-what-they-are-not).
+GrowPilot runs as one Node.js process (`server.ts`) that serves the built frontend, `/api/*` and the `/live`
+WebSocket. On Vercel that same process is bundled into a Function: `npm run vercel-build` runs `vite build`
+and then `esbuild server.ts --bundle --platform=node --format=esm --external:vite --outfile="api/[...path].mjs"`,
+and `export default httpServer` at the bottom of `server.ts` is what lets a Vercel Function own the socket —
+`startServer()` skips `listen()` when `VERCEL=1`, and the state file moves to `/tmp` for the same reason. Nothing is duplicated: the hosted Function and the Docker container are the same routes and the same
+Live API code.
 
 1. Push your repository to GitHub.
-2. Import the repository into **[Vercel](https://vercel.com/new)** with:
+2. Import the repository into **[Vercel](https://vercel.com/new)**. `vercel.json` already carries the build
+   command, output directory, `functions` duration and rewrites, so the dashboard fields only need to match:
    - **Framework Preset:** `Vite`
-   - **Build Command:** `npm run build`
-   - **Output Directory:** `dist`
+   - **Build Command:** `npm run vercel-build` (set by `vercel.json`)
+   - **Output Directory:** `dist` (set by `vercel.json`)
    - **Install Command:** `npm install --legacy-peer-deps`
-3. **Linking the `gtm` and `agent` subdomains:**
-   - In your Vercel project, go to **Settings → Domains** and add your two subdomains (for example, `gtm.yourdomain.com` and `agent.yourdomain.com`), then add the matching `CNAME` records (`cname.vercel-dns.com`) in your DNS provider.
+   - **Environment Variables:** `GEMINI_API_KEY` (Secret) — the Function reads it server-side, never the browser
+3. **Two routing details that are easy to get wrong:**
+   - Vercel turns `api/[...path].mjs` into a **single-segment** route, so `/api/agent/chat` and
+     `/api/gtm/analyze` 404 at the edge unless `vercel.json` also rewrites `/api/:path*` → `/api/[...path]`.
+     That rewrite preserves `req.url`, which is why one Express app can serve every depth.
+   - `/live` must rewrite to the same Function. `server.ts` accepts either `/live` or the configured
+     `GROWPILOT_FUNCTION_PATH` (default `/api/live`) so the upgrade is not silently dropped.
+4. **Linking the `gtm` and `agent` subdomains:**
+   - In your Vercel project, go to **Settings → Domains** and add your two subdomains (for example,
+     `gtm.yourdomain.com` and `agent.yourdomain.com`), then add the matching `CNAME` records
+     (`cname.vercel-dns.com`) in your DNS provider.
    - Because `src/App.tsx` inspects `window.location.hostname` automatically:
      - Visiting **`gtm.*`** opens Tab 1 (**`GTM Pipeline`**) by default.
      - Visiting **`agent.*`** opens Tab 2 (**`24/7 FAQ & Booking Agent`**) by default.
 
-### Giving the static Vercel UI a real backend (needed for models, live voice and n8n)
+### Pointing the hosted UI at your own machine (for local Ollama, n8n and durable CRM state)
 
-Vercel hosts files only: `vercel.json` rewrites every path to `/index.html`, so a POST to `/api/agent/chat`
-comes back as HTML and a `wss://…/live` upgrade has nothing to dial. The UI therefore asks you for a
-**backend origin** — the address of a machine that actually runs `server.ts`.
+The Vercel Function cannot reach a `127.0.0.1` Ollama or n8n on your laptop, and its `/tmp` store is
+ephemeral, so those three features need a backend you run. The **Backend:** pill in the telemetry strip takes
+the origin of a machine that actually runs `server.ts`.
 
 1. **Run the agent** (`npm run dev`, or `docker compose up -d growpilot-agent`) and confirm it answers:
    `curl -s localhost:3000/api/state | head -c 80`
-2. **Expose it with a free Cloudflare quick tunnel** — unlike Vercel, it proxies WebSocket traffic too:
+2. **Expose it with a free Cloudflare quick tunnel** — it proxies WebSocket traffic, so a browser on any
+   origin can dial `/live` through it:
    ```bash
    cloudflared tunnel --url http://localhost:3000
    ```
@@ -302,7 +314,8 @@ comes back as HTML and a `wss://…/live` upgrade has nothing to dial. The UI th
    the `https://…trycloudflare.com` URL, press **Connect & verify**. The chip turns to
    `· connected`, the header's `/api/state` load succeeds, and `/live` starts dialling the same origin.
    The value is saved in that browser's `localStorage` (`growpilot.backendOrigin`) only — nothing secret
-   leaves the page, and every request still carries your `GEMINI_API_KEY` server-side.
+   leaves the page, and every request still carries your `GEMINI_API_KEY` server-side. Press
+   **Use same-origin** to hand the page back to the Vercel Function.
 4. **Make it permanent** (either, or both):
    - **Named tunnel.** First find out who actually serves your DNS, because Cloudflare only issues tunnel
      public hostnames for zones whose nameservers point at Cloudflare:
@@ -464,7 +477,7 @@ Here is how to run a live voice call:
    - `Charon (Calm Specialist)` — steady, reassuring advisor tone
 2. **Click `Start Live Voice Call`**:
    - Your browser requests microphone permission and opens a `16kHz` PCM audio stream to `/live`, while setting up a gapless `24kHz` Web Audio playback queue for the agent's spoken responses.
-   - *(Note: Live voice streaming requires the Node.js or Docker backend running with a valid `GEMINI_API_KEY` in `.env`. On Vercel's static deployment the `/live` socket is not available.)*
+   - *(Note: live voice needs a backend that runs `/live` with a valid `GEMINI_API_KEY` — that is the Vercel Function on the hosted URLs, or your Node/Docker server when you point the UI at it.)*
 3. **Speak Naturally — or Use the One-Click Spoken Prompt Buttons:**
    - Once the status indicator shows **`Status: CONNECTED`**, you can either speak directly into your microphone (and use **`Mute Mic` / `Unmute Mic`** anytime) **or** click one of the two quick-trigger buttons even if you don't want to talk out loud:
      - **`Ask Voice Agent About Pricing`**: Sends *"Hi! Can you tell me how much your 24/7 WhatsApp AI agent and n8n package costs per month?"* and plays the agent's spoken answer while streaming the live transcript.
@@ -579,10 +592,10 @@ Shows a side-by-side comparison of a **Typical Bloated Prompt (`1,180 Tokens` �
 | `docker compose up -d --build` fails at `RUN npm install` (`exit code: 1`) | Your local `package.json` / `.npmrc` predate the current dependency handling. Run `git pull origin main` and re-run `docker compose up -d --build`. If it still fails, delete the build cache for that layer first: `docker compose build --no-cache growpilot-agent`. |
 | `[6/6] RUN npm run build` → `Cannot find native binding` / `@rolldown/binding-linux-x64-musl` | The image was built on Alpine (musl) while `package-lock.json` came from a glibc host, so rolldown's native binary was never installed. Fixed by the current `Dockerfile` (`node:22-slim`, no host lockfile copied) and the new `.dockerignore` — `git pull origin main`, then re-run the build. Full detail: [Port and build collisions](#port-and-build-collisions-you-may-hit-on-a-machine-that-already-runs-other-stacks). |
 | `[n8n] webhook delivery failed: n8n responded 404: The requested webhook "POST growpilot-lead" is not registered` | The workflow exists but is **not active** (n8n only registers production webhooks for active workflows), or the path/URL doesn't match. Activate the workflow's top-right toggle and use the Production URL `/webhook/growpilot-lead`, not `/webhook-test/…`. See [Automation Contract](#automation-contract-what-growpilot-actually-sends). |
-| On a `*.vercel.app` / linked subdomain: `WebSocket connection to /live failed`, `Replied by Deterministic template`, `n8n automation NOT CONFIGURED` | All three are one problem: the page has no server behind it. `vercel.json` rewrites `/api/*` and `/live` to `/index.html`, so the browser gets HTML where it expected JSON, `detectedStaticHost` is true, and the in-browser deterministic engine answers instead (it also hard-codes `not_configured` for automation, which is why the n8n row looks unconfigured even when `.env` is fine). Fix: run the agent somewhere real and point the page at it — [Giving the static Vercel UI a real backend](#giving-the-static-vercel-ui-a-real-backend-needed-for-models-live-voice-and-n8n). |
+| On a deployed URL: `WebSocket connection to /live failed`, `Replied by Deterministic template`, `n8n automation NOT CONFIGURED` | The page is not reaching a backend that runs the agent. The hosted URLs serve `/api/*` **and** `/live` from a Vercel Function, so this is almost always a stale `growpilot.backendOrigin` override in that browser: click **Backend:** in the telemetry strip → **Use same-origin** → reload. If it still fails, the Function did not deploy (check `vercel inspect <url> --logs` for `api/[...path].mjs`) or the override points at a machine that is down. For local Ollama, a private n8n or durable CRM state, run the agent yourself and point the page at it — [Pointing the hosted UI at your own machine](#pointing-the-hosted-ui-at-your-own-machine-for-local-ollama-n8n-and-durable-crm-state). |
 | `[n8n] webhook delivery failed: fetch failed` from the Docker agent | `N8N_WEBHOOK_URL` (or `OLLAMA_BASE_URL`) was inherited from `.env`, where it must be a **host** address. `http://127.0.0.1:5678` inside a container is that container, not your machine, and it is also the port an unrelated n8n stack usually owns. The compose file now reads `CONTAINER_N8N_WEBHOOK_URL` / `CONTAINER_OLLAMA_BASE_URL` and defaults to the in-network names `http://n8n:5678` / `http://ollama:11434`. |
 | `growpilot-ollama` keeps restarting; `docker logs` ends with `Error: pull model manifest: ... lookup registry.ollama.ai ... connection refused` | Two host-level traps, neither of them GrowPilot's code: the container resolves DNS through `127.0.0.53` (systemd-resolved's loopback stub), which a bridge network cannot reach, and/or the disk holding `/var/lib/docker` is full (`df -h /`) — a 2 GB model pull needs real headroom. `ollama serve` no longer shares an entrypoint with a download, so a failed pull cannot kill the service; retry the pull from the host or set `OLLAMA_BASE_URL` to an Ollama that already has the model. |
-| `Register tunnel error from server side: Unauthorized: Invalid tunnel secret` in `journalctl -u cloudflared` | The token the service reads is dead — its tunnel was deleted or its install token rotated. Copy a fresh **Install token** from Cloudflare Zero Trust → Networks → Tunnels, test it with `timeout 20 cloudflared --no-autoupdate tunnel run --token '<TOKEN>'` (you want `Registered with connection`), then write it to `/etc/cloudflared/token` and restart. Restarting with the old token loops forever. See [Giving the static Vercel UI a real backend](#giving-the-static-vercel-ui-a-real-backend-needed-for-models-live-voice-and-n8n). |
+| `Register tunnel error from server side: Unauthorized: Invalid tunnel secret` in `journalctl -u cloudflared` | The token the service reads is dead — its tunnel was deleted or its install token rotated. Copy a fresh **Install token** from Cloudflare Zero Trust → Networks → Tunnels, test it with `timeout 20 cloudflared --no-autoupdate tunnel run --token '<TOKEN>'` (you want `Registered with connection`), then write it to `/etc/cloudflared/token` and restart. Restarting with the old token loops forever. See [Pointing the hosted UI at your own machine](#pointing-the-hosted-ui-at-your-own-machine-for-local-ollama-n8n-and-durable-crm-state). |
 | `cloudflared service is already installed at /etc/systemd/system/cloudflared.service` | Only one cloudflared unit can exist per machine, so `service install` refuses before it ever validates the token. Refresh `/etc/cloudflared/token` and `systemctl enable --now cloudflared` instead (the unit already runs `tunnel run --token-file`), or `sudo cloudflared service uninstall` first. |
 | Named tunnel hostname answers **404 from Vercel** (or a `CNAME` you didn't set) while `cloudflared` logs `Registered with connection` | Your domain's nameservers are not Cloudflare's, so Cloudflare never receives the request: check `dig +short NS yourdomain.xyz`. Tunnel public hostnames only work for zones delegated to `ns1.cloudflare.net` / `ns2.cloudflare.net`. Use the `trycloudflare.com` quick tunnel instead, or migrate the zone to Cloudflare first. |
 | `permission denied while trying to connect to the Docker API socket` | Your shell user is not in the `docker` group. Run `sudo usermod -aG docker $USER`, then sign out and back in (or `newgrp docker`). This blocks `docker compose` and `docker exec`, but not `npm run dev` — the Node path needs no Docker at all. |

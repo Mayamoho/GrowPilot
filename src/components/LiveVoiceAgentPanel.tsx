@@ -358,7 +358,7 @@ export const LiveVoiceAgentPanel: React.FC<LiveVoiceAgentPanelProps> = ({
         setErrorMessage(
           backendOrigin()
             ? `WebSocket connection to ${backendOrigin()}/live failed.`
-            : 'No /live server at this origin — a static host (Vercel) cannot proxy WebSockets. Set the Backend origin in the header, then reload.'
+            : 'Could not open /live at this origin. Reload to retry; if it still fails, the backend behind this URL is not running the voice Function.'
         );
         setCallState('error');
       };

@@ -2,7 +2,8 @@ import 'dotenv/config';
 import http from 'http';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
-import { createServer as createViteServer } from 'vite';
+// `vite` is a dev-only dependency: importing it statically would drag it into the serverless
+// bundle that Vercel builds, where the dev branch never runs. It is imported lazily below.
 import path from 'path';
 import fs from 'fs';
 import dns from 'node:dns/promises';
@@ -75,6 +76,9 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
+// Where the serverless deployment puts this same server. vercel.json rewrites /live onto it, and
+// the upgrade handler takes either spelling because a rewrite may hand over the destination path.
+const LIVE_FUNCTION_PATH = process.env.GROWPILOT_FUNCTION_PATH?.trim() || '/api/live';
 // Ollama loads the model into RAM on the first call after being idle — 9s of the 21s a
 // one-sentence request took on this laptop's CPU. A 25s ceiling therefore aborted every
 // cold first run into the deterministic fallback, which is the tier local users hit most.
@@ -107,7 +111,13 @@ function getGenAIClient(): GoogleGenAI | null {
 // dashboard advertises a CRM log, so the store has to outlive the process.
 const STATE_FILE = process.env.GROWPILOT_STATE_FILE
   ? path.resolve(process.env.GROWPILOT_STATE_FILE)
-  : path.join(__dirname, '.data', 'growpilot-state.json');
+  : path.join(
+      // A Vercel Function's working directory is read-only and its /tmp is per-instance, so hosted
+      // leads only survive for that instance unless GROWPILOT_STATE_FILE points at real storage.
+      process.env.VERCEL === '1' ? '/tmp' : __dirname,
+      '.data',
+      'growpilot-state.json'
+    );
 
 let faqsStore: FaqItem[] = [...INITIAL_FAQS];
 let gtmRecordsStore: GtmPipelineRecord[] = [...INITIAL_GTM_RECORDS];
@@ -550,10 +560,12 @@ async function generateWithOllama(
   }
 }
 
+// Created at module scope: a serverless host imports this instance instead of binding a port.
+const app = express();
+const httpServer = http.createServer(app);
+
 async function startServer() {
-  const app = express();
   const PORT = Number(process.env.PORT || 3000);
-  const httpServer = http.createServer(app);
 
   app.use((req, res, next) => {
     const origin = req.headers.origin;
@@ -1353,7 +1365,8 @@ async function startServer() {
 
   httpServer.on('upgrade', (request, socket, head) => {
     const pathname = new URL(request.url || '/', 'http://localhost:3000').pathname;
-    if (pathname === '/live') {
+    // `/live` is the public path; the serverless rewrite may hand over the destination instead.
+    if (pathname === '/live' || pathname === LIVE_FUNCTION_PATH) {
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit('connection', ws, request);
       });
@@ -1723,6 +1736,7 @@ async function startServer() {
   });
 
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
@@ -1740,18 +1754,25 @@ async function startServer() {
     });
   }
 
-  httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`GrowPilot Full-Stack Server + Gemini Live API running on http://0.0.0.0:${PORT}`);
-    const loopbackInContainer =
-      fs.existsSync('/.dockerenv') &&
-      /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\//.test(N8N_WEBHOOK_URL);
-    console.log(
-      `[n8n] webhook target: ${N8N_WEBHOOK_URL || 'NOT CONFIGURED — set N8N_WEBHOOK_URL in .env'}` +
-        (loopbackInContainer
-          ? ' — loopback inside a container is the container itself; use http://n8n:5678/webhook/growpilot-lead'
-          : '')
-    );
-  });
+  // A serverless host owns the socket and dispatches requests into this instance itself, so
+  // binding a port would both fail and be pointless. Only the standalone/container path listens.
+  if (process.env.VERCEL !== '1') {
+    httpServer.listen(PORT, '0.0.0.0', () => {
+      console.log(`GrowPilot Full-Stack Server + Gemini Live API running on http://0.0.0.0:${PORT}`);
+      const loopbackInContainer =
+        fs.existsSync('/.dockerenv') &&
+        /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\//.test(N8N_WEBHOOK_URL);
+      console.log(
+        `[n8n] webhook target: ${N8N_WEBHOOK_URL || 'NOT CONFIGURED — set N8N_WEBHOOK_URL in .env'}` +
+          (loopbackInContainer
+            ? ' — loopback inside a container is the container itself; use http://n8n:5678/webhook/growpilot-lead'
+            : '')
+      );
+    });
+  }
 }
 
-startServer();
+// Awaited so every route is registered before a serverless invocation can reach the app.
+await startServer();
+
+export default httpServer;
