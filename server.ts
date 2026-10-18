@@ -37,7 +37,7 @@ import {
   type ModelTierId,
   type FaqItem,
   type ChatTurn,
-} from './src/utils/agentEngine.ts';
+} from './src/utils/agentEngine';
 import {
   INITIAL_FAQS,
   INITIAL_GTM_RECORDS,
@@ -45,10 +45,15 @@ import {
   type GtmPipelineRecord,
   type CrmBookingRecord,
   type AutomationDeliveryStatus,
-} from './src/data/seedData.ts';
+} from './src/data/seedData';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// `@vercel/node` may transpile this module to CJS, where `import.meta.url` is not available.
+let appDir = process.cwd();
+try {
+  appDir = path.dirname(fileURLToPath(import.meta.url));
+} catch {
+  // keep cwd
+}
 
 /**
  * Model IDs and prices are deployment data, not source constants: Google ships new
@@ -114,7 +119,7 @@ const STATE_FILE = process.env.GROWPILOT_STATE_FILE
   : path.join(
       // A Vercel Function's working directory is read-only and its /tmp is per-instance, so hosted
       // leads only survive for that instance unless GROWPILOT_STATE_FILE points at real storage.
-      process.env.VERCEL === '1' ? '/tmp' : __dirname,
+      process.env.VERCEL === '1' ? '/tmp' : appDir,
       '.data',
       'growpilot-state.json'
     );
@@ -1747,7 +1752,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(__dirname, 'dist');
+    const distPath = path.join(appDir, 'dist');
     app.use(express.static(distPath));
     app.get('*all', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
@@ -1772,7 +1777,8 @@ async function startServer() {
   }
 }
 
-// Awaited so every route is registered before a serverless invocation can reach the app.
-await startServer();
+// No top-level await: @vercel/node may transpile this module to CommonJS. The production branch
+// registers every route synchronously, so an invocation right after import already sees them.
+void startServer();
 
 export default httpServer;
