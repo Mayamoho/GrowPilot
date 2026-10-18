@@ -304,15 +304,38 @@ comes back as HTML and a `wss://…/live` upgrade has nothing to dial. The UI th
    The value is saved in that browser's `localStorage` (`growpilot.backendOrigin`) only — nothing secret
    leaves the page, and every request still carries your `GEMINI_API_KEY` server-side.
 4. **Make it permanent** (either, or both):
-   - **Named tunnel**: create a tunnel in the Cloudflare Zero Trust dashboard, point its public hostname
-     (e.g. `api.yourdomain.xyz`) at `http://localhost:3000`, then run
-     `cloudflared service install <token>`. The token belongs in `.env` (`CLOUDFLARE_TUNNEL_TOKEN`), never
-     in a commit. A stale or rotated token shows up as an endless
-     `Register tunnel error … Unauthorized: Invalid tunnel secret` in `journalctl -u cloudflared` — paste a
-     fresh one, don't just restart the service.
-   - **Build-time default**: set `VITE_BACKEND_URL=https://api.yourdomain.xyz` in the Vercel project's
+   - **Named tunnel.** First find out who actually serves your DNS, because Cloudflare only issues tunnel
+     public hostnames for zones whose nameservers point at Cloudflare:
+     ```bash
+     dig +short NS yourdomain.xyz
+     ```
+     If the answer is not `ns1.cloudflare.net` / `ns2.cloudflare.net` — e.g. `ns1.vercel-dns.com`, which is
+     what you get when the domain was added in the Vercel dashboard — then a hostname like
+     `api.yourdomain.xyz` will never reach your tunnel no matter what token you install: public traffic
+     resolves to Vercel, which serves files and answers 404. Move the zone to Cloudflare's free plan (and
+     re-create the existing Vercel records there) before choosing this route, or stay on step 2.
+   - **Build-time default**: set `VITE_BACKEND_URL=https://<your tunnel hostname>` in the Vercel project's
      Environment Variables and redeploy, so visitors get the backend without pasting anything. `localStorage`
      still overrides it per browser.
+   Two rules save the most wasted minutes here. **Verify a token before installing it** — a deleted or
+   rotated tunnel is accepted silently by `service install` and then loops forever:
+   ```bash
+   timeout 20 cloudflared --no-autoupdate tunnel run --token '<TOKEN>'   # want "Registered with connection"
+   ```
+   `--no-autoupdate` is a global flag, so it goes *before* `tunnel`. `Unauthorized: Invalid tunnel secret`
+   means the token is dead: copy a fresh **Install token** from the tunnel in the Zero Trust dashboard. You
+   never need `cloudflared login` / `cert.pem` for token-based tunnels. And when `service install` refuses
+   with `cloudflared service is already installed at /etc/systemd/system/cloudflared.service`, don't fight
+   it — the installed unit reads a token file, so refresh that file instead:
+   ```bash
+   printf '%s' '<FRESH_TOKEN>' | sudo tee /etc/cloudflared/token >/dev/null
+   sudo chmod 600 /etc/cloudflared/token
+   sudo systemctl enable --now cloudflared
+   journalctl -u cloudflared -n 20 | grep -iE "registered|error"
+   ```
+   (`sudo cloudflared service uninstall` then re-install works too, and is required if that unit runs
+   `--config /etc/cloudflared/config.yml` rather than `--token-file`.) `CLOUDFLARE_TUNNEL_TOKEN` in `.env`
+   is a note to yourself — no code reads it; the systemd unit reads `/etc/cloudflared/token`.
 5. **Lock CORS to your own front ends** once the origin is public. `server.ts` answers preflights for any
    origin while `ALLOWED_ORIGINS` is empty, and anyone who can reach the tunnel can spend your Gemini quota:
    ```bash
@@ -559,6 +582,8 @@ Shows a side-by-side comparison of a **Typical Bloated Prompt (`1,180 Tokens` �
 | On a `*.vercel.app` / linked subdomain: `WebSocket connection to /live failed`, `Replied by Deterministic template`, `n8n automation NOT CONFIGURED` | All three are one problem: the page has no server behind it. `vercel.json` rewrites `/api/*` and `/live` to `/index.html`, so the browser gets HTML where it expected JSON, `detectedStaticHost` is true, and the in-browser deterministic engine answers instead (it also hard-codes `not_configured` for automation, which is why the n8n row looks unconfigured even when `.env` is fine). Fix: run the agent somewhere real and point the page at it — [Giving the static Vercel UI a real backend](#giving-the-static-vercel-ui-a-real-backend-needed-for-models-live-voice-and-n8n). |
 | `[n8n] webhook delivery failed: fetch failed` from the Docker agent | `N8N_WEBHOOK_URL` (or `OLLAMA_BASE_URL`) was inherited from `.env`, where it must be a **host** address. `http://127.0.0.1:5678` inside a container is that container, not your machine, and it is also the port an unrelated n8n stack usually owns. The compose file now reads `CONTAINER_N8N_WEBHOOK_URL` / `CONTAINER_OLLAMA_BASE_URL` and defaults to the in-network names `http://n8n:5678` / `http://ollama:11434`. |
 | `growpilot-ollama` keeps restarting; `docker logs` ends with `Error: pull model manifest: ... lookup registry.ollama.ai ... connection refused` | Two host-level traps, neither of them GrowPilot's code: the container resolves DNS through `127.0.0.53` (systemd-resolved's loopback stub), which a bridge network cannot reach, and/or the disk holding `/var/lib/docker` is full (`df -h /`) — a 2 GB model pull needs real headroom. `ollama serve` no longer shares an entrypoint with a download, so a failed pull cannot kill the service; retry the pull from the host or set `OLLAMA_BASE_URL` to an Ollama that already has the model. |
-| `Register tunnel error from server side: Unauthorized: Invalid tunnel secret` in `journalctl -u cloudflared` | The `CLOUDFLARE_TUNNEL_TOKEN` baked into the installed service was rotated or its tunnel deleted. Generate a new token in Cloudflare Zero Trust → Networks → Tunnels and re-run `cloudflared service install <token>`; restarting the service with the old token loops forever. |
+| `Register tunnel error from server side: Unauthorized: Invalid tunnel secret` in `journalctl -u cloudflared` | The token the service reads is dead — its tunnel was deleted or its install token rotated. Copy a fresh **Install token** from Cloudflare Zero Trust → Networks → Tunnels, test it with `timeout 20 cloudflared --no-autoupdate tunnel run --token '<TOKEN>'` (you want `Registered with connection`), then write it to `/etc/cloudflared/token` and restart. Restarting with the old token loops forever. See [Giving the static Vercel UI a real backend](#giving-the-static-vercel-ui-a-real-backend-needed-for-models-live-voice-and-n8n). |
+| `cloudflared service is already installed at /etc/systemd/system/cloudflared.service` | Only one cloudflared unit can exist per machine, so `service install` refuses before it ever validates the token. Refresh `/etc/cloudflared/token` and `systemctl enable --now cloudflared` instead (the unit already runs `tunnel run --token-file`), or `sudo cloudflared service uninstall` first. |
+| Named tunnel hostname answers **404 from Vercel** (or a `CNAME` you didn't set) while `cloudflared` logs `Registered with connection` | Your domain's nameservers are not Cloudflare's, so Cloudflare never receives the request: check `dig +short NS yourdomain.xyz`. Tunnel public hostnames only work for zones delegated to `ns1.cloudflare.net` / `ns2.cloudflare.net`. Use the `trycloudflare.com` quick tunnel instead, or migrate the zone to Cloudflare first. |
 | `permission denied while trying to connect to the Docker API socket` | Your shell user is not in the `docker` group. Run `sudo usermod -aG docker $USER`, then sign out and back in (or `newgrp docker`). This blocks `docker compose` and `docker exec`, but not `npm run dev` — the Node path needs no Docker at all. |
 
