@@ -27,6 +27,7 @@ import {
   type ModelTierId,
   type ChatTurn,
 } from './utils/agentEngine';
+import { apiUrl, backendOrigin, saveBackendOrigin } from './utils/backend';
 
 interface TelemetrySummary {
   totalRequests: number;
@@ -111,21 +112,40 @@ export default function App() {
     return initial;
   });
   const [clientSessionTurns, setClientSessionTurns] = useState<Record<string, ChatTurn[]>>({});
+  const [backendOriginLabel, setBackendOriginLabel] = useState<string>(() => backendOrigin());
+  const [isBackendLive, setIsBackendLive] = useState<boolean>(false);
+  const [isBackendEditorOpen, setIsBackendEditorOpen] = useState<boolean>(false);
+  const [backendDraft, setBackendDraft] = useState<string>('');
+
+  const loadServerState = async () => {
+    try {
+      const res = await fetch(apiUrl('/api/state'));
+      const data = res.ok ? await res.json() : null;
+      if (data && typeof data === 'object') {
+        if (data.faqs) setFaqs(data.faqs);
+        if (data.gtmRecords) setGtmRecords(data.gtmRecords);
+        if (data.crmBookings) setCrmBookings(data.crmBookings);
+        if (data.telemetry) setTelemetry(data.telemetry);
+        setIsBackendLive(true);
+        return;
+      }
+      setIsBackendLive(false);
+    } catch {
+      // No server at this origin: the in-memory deterministic engine takes over.
+      setIsBackendLive(false);
+    }
+  };
+
+  const handleConnectBackend = async (input: string) => {
+    const saved = saveBackendOrigin(input);
+    if (!saved.ok) return;
+    setBackendOriginLabel(saved.origin);
+    setIsBackendEditorOpen(false);
+    await loadServerState();
+  };
 
   useEffect(() => {
-    fetch('/api/state')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data && typeof data === 'object') {
-          if (data.faqs) setFaqs(data.faqs);
-          if (data.gtmRecords) setGtmRecords(data.gtmRecords);
-          if (data.crmBookings) setCrmBookings(data.crmBookings);
-          if (data.telemetry) setTelemetry(data.telemetry);
-        }
-      })
-      .catch(() => {
-        // Static deployment fallback uses in-memory deterministic engine
-      });
+    void loadServerState();
   }, []);
 
   const runClientSideGtmFallback = (payload: {
@@ -289,6 +309,8 @@ export default function App() {
       },
       groundednessReport,
       costMetrics,
+      modelError:
+        'No agent server was reachable, so deterministic templates wrote these assets. Set the Backend origin in the header to run the real 5-layer pipeline through Gemini or local Ollama.',
     };
 
     setClientGtmCache((prev) => ({ ...prev, [cacheKey]: record }));
@@ -321,7 +343,7 @@ export default function App() {
   }): Promise<GtmPipelineRecord | null> => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/gtm/analyze', {
+      const res = await fetch(apiUrl('/api/gtm/analyze'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -356,7 +378,7 @@ export default function App() {
   const handleClearCache = async () => {
     setClientGtmCache({});
     try {
-      await fetch('/api/cache/clear', { method: 'POST' });
+      await fetch(apiUrl('/api/cache/clear'), { method: 'POST' });
     } catch {
       // ignore on static host
     }
@@ -515,7 +537,8 @@ export default function App() {
         droppedTurns: finalTurns.droppedCount,
         costMetrics,
         generationSource: 'deterministic-fallback',
-        modelError: 'Static deployment: no server or API key available, so the deterministic qualification template replied.',
+        modelError:
+          'No agent server was reachable, so the deterministic qualification template replied. Set the Backend origin in the header (top telemetry strip) to route this reply through Gemini or local Ollama.',
         automationStatus: 'not_configured',
       },
     };
@@ -529,7 +552,7 @@ export default function App() {
   }): Promise<{ reply: string; trace: AgentTrace } | null> => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/agent/chat', {
+      const res = await fetch(apiUrl('/api/agent/chat'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -576,7 +599,7 @@ export default function App() {
     };
 
     try {
-      const res = await fetch('/api/faq/add', {
+      const res = await fetch(apiUrl('/api/faq/add'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -610,11 +633,68 @@ export default function App() {
       <div className="bg-white border-b border-slate-200 px-4 sm:px-6 py-2">
         <div className="max-w-[1360px] mx-auto flex flex-wrap items-center justify-between gap-2 text-xs">
           <div className="flex items-center gap-2 text-slate-600">
-            <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+            <span
+              className={`inline-block w-2 h-2 rounded-full ${
+                isBackendLive || !backendOriginLabel ? 'bg-emerald-500' : 'bg-amber-500'
+              }`}
+            />
             <span className="font-medium text-slate-800">
               Layer 0 Cache &amp; Smallest-Model Router Active
             </span>
+            <span aria-hidden="true" className="text-slate-300">
+              ·
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setBackendDraft(backendOriginLabel);
+                setIsBackendEditorOpen((prev) => !prev);
+              }}
+              className={`font-medium underline decoration-dotted underline-offset-2 cursor-pointer whitespace-nowrap ${
+                isBackendLive || !backendOriginLabel ? 'text-slate-600' : 'text-amber-700'
+              }`}
+              title="Where /api/* and the /live voice WebSocket are served"
+            >
+              Backend: {backendOriginLabel || 'same-origin'}
+              {backendOriginLabel ? (isBackendLive ? ' · connected' : ' · unreachable') : ''}
+            </button>
           </div>
+
+          {isBackendEditorOpen && (
+            <div className="w-full flex flex-col sm:flex-row sm:items-center gap-2 pt-1">
+              <input
+                type="url"
+                value={backendDraft}
+                onChange={(e) => setBackendDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void handleConnectBackend(backendDraft);
+                }}
+                placeholder="https://xxx.trycloudflare.com or http://localhost:3000"
+                aria-label="Backend origin"
+                className="flex-1 max-w-md px-2.5 py-1.5 text-xs font-mono border border-slate-300 rounded-md bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-600/30"
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleConnectBackend(backendDraft)}
+                  className="px-3 py-1.5 rounded-md text-xs font-semibold bg-teal-700 text-white hover:bg-teal-800 cursor-pointer whitespace-nowrap"
+                >
+                  Connect &amp; verify
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleConnectBackend('')}
+                  className="px-3 py-1.5 rounded-md text-xs font-medium border border-slate-300 text-slate-600 hover:text-slate-900 cursor-pointer whitespace-nowrap"
+                >
+                  Use same-origin
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-500 sm:ml-auto sm:max-w-[16rem] sm:text-right">
+                Static hosts (Vercel) serve the UI only — point this page at a running GrowPilot
+                agent for real models, live voice and n8n. Saved in this browser.
+              </p>
+            </div>
+          )}
 
           <div className="flex flex-wrap items-center gap-4 font-mono tabular-nums text-xs">
             <div>

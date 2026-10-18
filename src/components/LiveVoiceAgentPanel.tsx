@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { type CrmBookingRecord } from '../data/seedData';
+import { backendOrigin, wsUrl } from '../utils/backend';
 import { Mic, MicOff, PhoneCall, PhoneOff, Volume2, Calendar } from 'lucide-react';
 
 interface LiveVoiceAgentPanelProps {
@@ -190,11 +191,7 @@ export const LiveVoiceAgentPanel: React.FC<LiveVoiceAgentPanelProps> = ({
       outputAudioCtxRef.current = new AudioContext({ sampleRate: 24000 });
       nextStartTimeRef.current = outputAudioCtxRef.current.currentTime;
 
-      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${wsProtocol}//${window.location.host}/live?voice=${encodeURIComponent(
-        selectedVoice
-      )}`;
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(wsUrl('/live?voice=' + encodeURIComponent(selectedVoice)));
       wsRef.current = ws;
 
       ws.onopen = async () => {
@@ -264,7 +261,11 @@ export const LiveVoiceAgentPanel: React.FC<LiveVoiceAgentPanelProps> = ({
       };
 
       ws.onerror = () => {
-        setErrorMessage('WebSocket connection to /live encountered an error.');
+        setErrorMessage(
+          backendOrigin()
+            ? `WebSocket connection to ${backendOrigin()}/live failed.`
+            : 'No /live server at this origin — a static host (Vercel) cannot proxy WebSockets. Set the Backend origin in the header, then reload.'
+        );
         setCallState('error');
       };
 

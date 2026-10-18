@@ -11,17 +11,26 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - OLLAMA_BASE_URL=http://ollama:11434
+      # Container endpoints use CONTAINER_* names on purpose: .env holds the values a host-run
+      # `npm run dev` needs (http://127.0.0.1:11434, http://127.0.0.1:5680), and 127.0.0.1 inside
+      # this container is the container itself — inheriting them made every handoff fail with
+      # "fetch failed" while the same .env worked perfectly outside Docker.
+      - OLLAMA_BASE_URL=${CONTAINER_OLLAMA_BASE_URL:-http://ollama:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
       - GEMINI_MODEL_FLASH=${GEMINI_MODEL_FLASH:-gemini-3.5-flash}
       - GEMINI_MODEL_FLASH_LITE=${GEMINI_MODEL_FLASH_LITE:-gemini-3.1-flash-lite}
       - GEMINI_MODEL_LIVE=${GEMINI_MODEL_LIVE:-gemini-3.1-flash-live-preview}
-      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL:-http://n8n:5678/webhook/growpilot-lead}
+      - N8N_WEBHOOK_URL=${CONTAINER_N8N_WEBHOOK_URL:-http://n8n:5678/webhook/growpilot-lead}
       - N8N_USER=${N8N_USER:-}
       - N8N_PASSWORD=${N8N_PASSWORD:-}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
       - GROWPILOT_STATE_FILE=/data/growpilot-state.json
     volumes:
       - growpilot_data:/data
+    # Lets OLLAMA_BASE_URL=http://host.docker.internal:11434 reach an Ollama installed on the
+    # host (which already owns 11434) instead of a second container that cannot bind it.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - ollama
       - n8n
@@ -34,10 +43,27 @@ services:
     restart: unless-stopped
     ports:
       # Configurable for the same reason as n8n: a host-installed Ollama already owns 11434.
-      - "${OLLAMA_HOST_PORT:-11434}:11434"
+      - "${OLLAMA_HOST_PORT:-11435}:11434"
     volumes:
       - ollama_data:/root/.ollama
-    entrypoint: [ "/bin/sh", "-c", "ollama serve & sleep 5 && ollama pull ${OLLAMA_MODEL:-llama3.2:3b} && wait" ]
+      # A second copy of a 2 GB model is not always an option (a nearly full disk refuses the
+      # pull outright), so an existing Ollama store can be mounted read-only instead: the DB and
+      # any new pulls stay in the named volume above, only the model blobs are shared. Left unset
+      # this resolves to an empty ./ollama-models directory and changes nothing.
+      - "${OLLAMA_HOST_MODELS_DIR:-./ollama-models}/blobs:/root/.ollama/models/blobs:ro"
+      - "${OLLAMA_HOST_MODELS_DIR:-./ollama-models}/manifests:/root/.ollama/models/manifests:ro"
+    # Ubuntu's systemd-resolved listens on 127.0.0.53, which Docker copies into the container as
+    # an upstream resolver — unreachable from a bridge network, so `ollama pull` dies with
+    # "dial tcp: lookup registry.ollama.ai ... connection refused". Public resolvers are set on
+    # this service only, not in /etc/docker/daemon.json, so no other stack is affected.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    # Deliberately no `ollama pull` here. An entrypoint that downloads a model exits non-zero
+    # when the download fails (no DNS/no registry reachability from a bridge network is common),
+    # and `restart: unless-stopped` then turns the whole service into a crash loop — the agent's
+    # `http://ollama:11434` call target never exists, so the $0.00 tier silently never runs.
+    # Pull once, explicitly: docker compose exec ollama ollama pull llama3.2:3b
     networks:
       - growpilot-net
 

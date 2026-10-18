@@ -63,6 +63,13 @@ const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434'
   ''
 );
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL?.trim() || '';
+// The Vercel-hosted UI calls this agent from a different origin, so the browser needs an
+// explicit permit. Empty allowlist = any origin; pin it with ALLOWED_ORIGINS once the
+// backend is public, because anyone who can reach this server can spend GEMINI_API_KEY.
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 // Ollama loads the model into RAM on the first call after being idle — 9s of the 21s a
 // one-sentence request took on this laptop's CPU. A 25s ceiling therefore aborted every
 // cold first run into the deterministic fallback, which is the tier local users hit most.
@@ -539,6 +546,22 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT || 3000);
   const httpServer = http.createServer(app);
+
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && (ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.includes(origin))) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+      res.setHeader('Access-Control-Max-Age', '600');
+    }
+    if (req.method === 'OPTIONS') {
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
 
   app.use(express.json({ limit: '2mb' }));
 
@@ -1636,6 +1659,15 @@ async function startServer() {
 
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`GrowPilot Full-Stack Server + Gemini Live API running on http://0.0.0.0:${PORT}`);
+    const loopbackInContainer =
+      fs.existsSync('/.dockerenv') &&
+      /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\//.test(N8N_WEBHOOK_URL);
+    console.log(
+      `[n8n] webhook target: ${N8N_WEBHOOK_URL || 'NOT CONFIGURED — set N8N_WEBHOOK_URL in .env'}` +
+        (loopbackInContainer
+          ? ' — loopback inside a container is the container itself; use http://n8n:5678/webhook/growpilot-lead'
+          : '')
+    );
   });
 }
 
