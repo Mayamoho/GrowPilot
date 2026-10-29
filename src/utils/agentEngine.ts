@@ -298,7 +298,9 @@ export function calculateRunCost(params: {
   const spec = MODEL_TIERS[params.modelUsed] || MODEL_TIERS['gemini-3.5-flash-lite'];
   const frontier = MODEL_TIERS['frontier-baseline'];
 
-  const modelCalled = params.modelCalled !== false;
+  // A Layer 0 cache hit is answered without invoking any model, regardless of the
+  // selected tier. Keep the audit flag aligned with the zero-token billing path.
+  const modelCalled = params.modelCalled !== false && !params.cacheHit;
   const effectiveInput = params.cacheHit || !modelCalled ? 0 : params.inputTokens;
   const effectiveOutput = params.cacheHit || !modelCalled ? 0 : params.outputTokens;
 

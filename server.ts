@@ -653,15 +653,26 @@ async function startServer() {
   // 4. Autonomous GTM Engineering Pipeline (Scrape/Strip -> ICP Score Gate -> Grounded Generation -> CRM)
   app.post('/api/gtm/analyze', async (req, res) => {
     const startMs = Date.now();
-    const {
-      companyName = 'Target Prospect',
-      sourceUrl = 'https://example.com',
-      industry = 'B2B Services & Automation',
-      rawContent = '',
-      icpThreshold = 60,
-      modelPreference = 'gemini-3.8-flash',
-      bypassCache = false,
-    } = req.body || {};
+    const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
+    const companyName = body.companyName === undefined ? 'Target Prospect' : body.companyName;
+    const sourceUrl = body.sourceUrl === undefined ? 'https://example.com' : body.sourceUrl;
+    const industry = body.industry === undefined ? 'B2B Services & Automation' : body.industry;
+    const rawContent = body.rawContent === undefined ? '' : body.rawContent;
+    const modelPreference = body.modelPreference === undefined ? 'gemini-3.8-flash' : body.modelPreference;
+    const bypassCache = body.bypassCache === true;
+    const parsedThreshold = body.icpThreshold === undefined ? 60 : Number(body.icpThreshold);
+
+    if (
+      typeof companyName !== 'string' ||
+      typeof sourceUrl !== 'string' ||
+      typeof industry !== 'string' ||
+      typeof rawContent !== 'string' ||
+      !Number.isFinite(parsedThreshold)
+    ) {
+      res.status(400).json({ error: 'companyName, sourceUrl, industry and rawContent must be strings; icpThreshold must be a number.' });
+      return;
+    }
+    const icpThreshold = Math.max(0, Math.min(100, parsedThreshold));
 
     if (!companyName.trim() || (!rawContent.trim() && !sourceUrl.trim())) {
       res.status(400).json({ error: 'Please provide a company/article name and content or URL.' });
@@ -1058,12 +1069,16 @@ async function startServer() {
   // 5. 24/7 Cached FAQ & WhatsApp Lead Qualification Agent
   app.post('/api/agent/chat', async (req, res) => {
     const startMs = Date.now();
-    const {
-      message = '',
-      sessionId = 'default-session',
-      modelPreference = 'gemini-3.5-flash-lite',
-      channel = 'WhatsApp Business',
-    } = req.body || {};
+    const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
+    const message = body.message === undefined ? '' : body.message;
+    const sessionId = body.sessionId === undefined ? 'default-session' : body.sessionId;
+    const modelPreference = body.modelPreference === undefined ? 'gemini-3.5-flash-lite' : body.modelPreference;
+    const channel = body.channel === undefined ? 'WhatsApp Business' : body.channel;
+
+    if (typeof message !== 'string' || typeof sessionId !== 'string' || typeof channel !== 'string') {
+      res.status(400).json({ error: 'message, sessionId and channel must be strings.' });
+      return;
+    }
 
     if (!message.trim()) {
       res.status(400).json({ error: 'Message cannot be empty.' });

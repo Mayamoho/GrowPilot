@@ -70,6 +70,7 @@ test('calculateRunCost returns $0.00 for Layer 0 cache hits and Ollama local mod
   });
   assert.equal(cachedCost.estimatedCostUsd, 0);
   assert.equal(cachedCost.totalTokens, 0);
+  assert.equal(cachedCost.modelCalled, false);
   assert.equal(cachedCost.costSavedUsd > 0, true);
 
   const ollamaCost = calculateRunCost({
