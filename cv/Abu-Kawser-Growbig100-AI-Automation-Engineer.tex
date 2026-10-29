@@ -1,0 +1,95 @@
+\documentclass[10pt,a4paper]{article}
+
+\usepackage[a4paper,hmargin=0.55in,vmargin=0.38in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{accent}{RGB}{0,82,147}
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt}
+\hypersetup{colorlinks=true,urlcolor=accent}
+\titleformat{\section}{\large\bfseries\color{accent}}{}{0em}{}
+  [\vspace{-0.65em}{\color{accent}\rule{\linewidth}{0.55pt}}]
+\titlespacing*{\section}{0pt}{4pt}{1.5pt}
+\setlist[itemize]{leftmargin=1.2em,itemsep=0.5pt,topsep=1pt,parsep=0pt,partopsep=0pt}
+\newcommand{\project}[3]{\textbf{#1} \hfill {\small #2}\\{\small\textit{#3}}\par}
+
+\begin{document}
+
+\begin{center}
+{\LARGE\bfseries Abu Kawser}\\[2pt]
+AI Automation Engineer \textbullet{} Backend \& Systems Engineer\\[2pt]
+\small Dhaka, Bangladesh \;|\; +880 1315 267528 \;|\;
+\href{mailto:kawserabu11mini@gmail.com}{kawserabu11mini@gmail.com}\\[2pt]
+\href{https://github.com/Mayamoho}{GitHub} \;|\;
+\href{https://portfolio-sable-nu-70.vercel.app/}{Portfolio} \;|\;
+\href{https://www.linkedin.com/in/abu-kawser-40bb49331/}{LinkedIn}
+\end{center}
+
+\section{Targeted Summary}
+Final-year CSE student at the University of Dhaka building AI agents and the automation around them. Built and deployed GrowPilot, a TypeScript/Express workbench that scrapes and cleans prospect pages, gates leads with deterministic ICP scoring, generates grounded outbound copy, answers cached FAQs, qualifies leads, books appointments and reports token cost. Hands-on with Gemini, Groq, Cerebras and Ollama APIs, n8n webhooks, Docker Compose, Linux and AI-assisted development. Available for remote work and Dhaka office work after the remote period.
+
+\section{Role-Matched Skills}
+{\small
+\begin{tabularx}{\linewidth}{@{}>{\bfseries}p{1.22in} >{\raggedright\arraybackslash}X@{}}
+AI agents & Gemini API, Groq, Cerebras, Ollama/Llama 3.2 3B, prompt design, model routing, retries, fallbacks, conversation windows, prompt-injection screening, groundedness verification\\
+Automation & n8n Webhook $\rightarrow$ Code $\rightarrow$ Respond workflow, REST APIs, JSON, webhooks, CRM/Google Sheets delivery contract, FAQ caching, calendar-booking logic\\
+GTM engineering & URL fetching, HTML boilerplate stripping, ICP scoring, lead qualification, grounded personalization, outbound email/WhatsApp copy, CSV export\\
+Engineering & TypeScript, JavaScript, Python, Go, Express, FastAPI, PostgreSQL/pgvector, MongoDB, Redis, REST, SSE, testing and validation\\
+Deployment & Ubuntu (primary OS since 2022), Docker, Docker Compose, Linux, Vercel, Render, Azure, GitHub Actions; also Kali, Linux Mint and Xubuntu in dual-boot/VM environments\\
+AI tools & Claude Code, Codex, Qoder (Qwen 3.8 Flash), Cursor and Freebuff (GLM 5.3); comfortable using AI coding tools to ship and debug faster\\
+Additional & Flutter/Dart, Firebase, Supabase, Next.js, React, PWA, WhatsApp Business integration concepts, English and Bengali
+\end{tabularx}}
+
+\section{Selected Work}
+\project{GrowPilot --- Cost-Aware GTM and Customer Automation}
+{\href{https://github.com/Mayamoho/GrowPilot}{GitHub} \textbar{} \href{https://gtm.abukawser.xyz}{GTM demo} \textbar{} \href{https://agent.abukawser.xyz}{Agent demo}}
+{TypeScript, React, Express, Gemini API, Ollama, Docker Compose, n8n}
+\begin{itemize}
+\item Built a live GTM pipeline: fetch a prospect URL, strip scripts/styles/navigation/footer content, estimate token savings, score ICP fit and stop low-fit leads before generation.
+\item Built a 24/7 FAQ and qualification agent with a zero-token normalized cache, budget extraction, bounded six-turn memory, booking decisions, CRM records and n8n webhook delivery.
+\item Added a five-layer groundedness gate for entity attribution, numeric claims, extracted facts, unsupported-claim filtering and prompt-injection safety; added retry/backoff, model fallback, cost metering and private-IP blocking.
+\item Shipped Docker Compose for the agent, Ollama and n8n, plus a Vercel deployment. The repository includes a ready-to-import n8n Webhook/Code/Respond workflow.
+\end{itemize}
+
+\project{CareerPilot --- AI Job Matching and CV Generation}
+{\href{https://github.com/Mayamoho/career-pilot}{GitHub}}
+{Python, Groq, Gemini, SQLite, BM25, Pydantic, pytest, mypy, ruff, GitHub Actions}
+\begin{itemize}
+\item Collects public ATS postings, extracts requirements, scores fit by location and skills, and generates grounded CV and cover-letter drafts with recorded CI evaluations.
+\end{itemize}
+
+\project{CSEDU Digital Knowledge Platform --- RAG Assistant}
+{\href{https://github.com/Mayamoho/CSEDU-Digital-Knowledge-Platform-main}{GitHub}}
+{Next.js, React, Go/chi, FastAPI, PostgreSQL/pgvector, Redis, MinIO, Docker, Azure}
+\begin{itemize}
+\item Built hybrid vector plus PostgreSQL full-text retrieval, cited SSE answers, Groq primary/Gemini fallback, prompt-injection screening, RBAC and audit logging.
+\end{itemize}
+
+\project{LearnLoop --- Flutter Skill-Sharing App}
+{\href{https://github.com/Mayamoho/learnloop}{GitHub}}
+{Flutter/Dart, Firebase}
+\begin{itemize}
+\item Team-built mobile app with courses, progress tracking, chat, communities and gamified quizzes; contributed authentication and core screens.
+\end{itemize}
+
+\section{Experience and Achievements}
+\textbf{Contributor, Eventify BD} --- technology-event discovery platform.\\
+\textbf{Academic Team Member, Bangladesh Mathematical Olympiad} --- Dec 2022--Jul 2024.\\
+Finalist/top-ranked participant across 2024--2026 hackathons, datathons and CTFs, including 5th place at July Hackathon 2026 and 9th place at BUP CTF 2026.
+
+\section{Education}
+\textbf{B.Sc. in CSE, University of Dhaka} \hfill 2022--Present\\
+Final-year undergraduate, 2nd semester. HSC, Notre Dame College (GPA 5.00/5.00); SSC, Cantonment Public School and College, Rangpur (GPA 5.00/5.00).
+
+\section{Availability}
+Own laptop and stable internet for the remote period. Comfortable working within the advertised 10am--10pm window, relocating to the Dhaka office after the remote period, and completing the paid 48-hour n8n + LLM test task.
+
+\end{document}
