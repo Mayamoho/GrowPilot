@@ -298,6 +298,8 @@ export function calculateRunCost(params: {
   latencyMs?: number;
   /** False when the deterministic template answered instead of a model — bills nothing. */
   modelCalled?: boolean;
+  providerInputTokens?: number;
+  providerOutputTokens?: number;
 }): CostMetrics {
   const spec = MODEL_TIERS[params.modelUsed] || MODEL_TIERS['gemini-3.5-flash-lite'];
   const frontier = MODEL_TIERS['frontier-baseline'];
@@ -305,8 +307,18 @@ export function calculateRunCost(params: {
   // A Layer 0 cache hit is answered without invoking any model, regardless of the
   // selected tier. Keep the audit flag aligned with the zero-token billing path.
   const modelCalled = params.modelCalled !== false && !params.cacheHit;
-  const effectiveInput = params.cacheHit || !modelCalled ? 0 : params.inputTokens;
-  const effectiveOutput = params.cacheHit || !modelCalled ? 0 : params.outputTokens;
+  const providerUsageAvailable =
+    modelCalled && Number.isFinite(params.providerInputTokens) && Number.isFinite(params.providerOutputTokens);
+  const effectiveInput = params.cacheHit || !modelCalled
+    ? 0
+    : providerUsageAvailable
+      ? Math.max(0, Math.round(params.providerInputTokens as number))
+      : params.inputTokens;
+  const effectiveOutput = params.cacheHit || !modelCalled
+    ? 0
+    : providerUsageAvailable
+      ? Math.max(0, Math.round(params.providerOutputTokens as number))
+      : params.outputTokens;
 
   const estimatedCostUsd =
     (effectiveInput / 1_000_000) * spec.inputCostPerMillionUsd +
@@ -333,7 +345,10 @@ export function calculateRunCost(params: {
     baselineFrontierCostUsd: Number(baselineFrontierCostUsd.toFixed(6)),
     costSavedUsd: Number(costSavedUsd.toFixed(6)),
     latencyMs: params.latencyMs ?? (params.cacheHit ? 3 : spec.avgLatencyMs),
-    usageSource: modelCalled ? 'estimated' : 'none',
+    usageSource: providerUsageAvailable ? 'provider' : modelCalled ? 'estimated' : 'none',
+    ...(providerUsageAvailable
+      ? { providerInputTokens: effectiveInput, providerOutputTokens: effectiveOutput }
+      : {}),
   };
 }
 

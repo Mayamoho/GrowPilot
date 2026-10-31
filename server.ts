@@ -592,7 +592,13 @@ async function fetchProspectPageSafely(targetUrl: string): Promise<string> {
  * degrades to the smallest model that answers instead of degrading to a template — and returns
  * which model actually replied so billing and the UI label follow the truth.
  */
-type GeminiResult = { text: string | null; model: string; degraded: boolean };
+type GeminiResult = {
+  text: string | null;
+  model: string;
+  degraded: boolean;
+  inputTokens?: number;
+  outputTokens?: number;
+};
 
 async function generateWithGemini(
   ai: GoogleGenAI,
@@ -610,7 +616,16 @@ async function generateWithGemini(
           ...request,
           model,
         } as Parameters<GoogleGenAI['models']['generateContent']>[0]);
-        return { text: res.text ?? null, model, degraded: model !== request.model };
+        const usage = res.usageMetadata as
+          | { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number }
+          | undefined;
+        return {
+          text: res.text ?? null,
+          model,
+          degraded: model !== request.model,
+          inputTokens: usage?.promptTokenCount,
+          outputTokens: usage?.candidatesTokenCount,
+        };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         const quota = /exceeded your current quota|billing/i.test(message);
@@ -1031,6 +1046,8 @@ async function startServer() {
     // Tier that is actually billed. Differs from the requested tier only when Gemini answered
     // on the quota fallback, so cost and the UI label never claim a pricier model than ran.
     let billedTier: ModelTierId = selectedTier;
+    let providerInputTokens: number | undefined;
+    let providerOutputTokens: number | undefined;
     const notes: string[] = [];
     if (fetchNote) notes.push(`Source fetch: ${fetchNote}`);
 
@@ -1146,6 +1163,8 @@ async function startServer() {
               `${resolveApiModelId(selectedTier)} is out of quota for this key; copy was generated and billed by ${result.model}.`
             );
           }
+          providerInputTokens = result.inputTokens;
+          providerOutputTokens = result.outputTokens;
 
           if (adoptGeneratedCopy(result.text)) {
             generationSource = 'gemini-llm';
@@ -1191,6 +1210,8 @@ async function startServer() {
       rawUnstrippedInputTokens: stripped.rawEstimatedTokens + 250,
       latencyMs: Math.max(140, Date.now() - startMs),
       modelCalled: generationSource !== 'deterministic-fallback',
+      providerInputTokens,
+      providerOutputTokens,
     });
 
     const newRecord: GtmPipelineRecord = {
@@ -1414,6 +1435,8 @@ async function startServer() {
     let replyText = '';
     let generationSource: GenerationSource = 'deterministic-fallback';
     let billedTier: ModelTierId = selectedTier;
+    let providerInputTokens: number | undefined;
+    let providerOutputTokens: number | undefined;
     let modelError: string | null = null;
 
     const qualificationSystemInstruction =
@@ -1471,6 +1494,8 @@ async function startServer() {
               billedTier = 'gemini-3.5-flash-lite';
               modelError = `${resolveApiModelId(selectedTier)} is out of quota for this key; reply generated and billed by ${result.model}.`;
             }
+            providerInputTokens = result.inputTokens;
+            providerOutputTokens = result.outputTokens;
             if (result.text) {
               replyText = result.text.trim();
               generationSource = 'gemini-llm';
@@ -1498,6 +1523,8 @@ async function startServer() {
       outputTokens,
       latencyMs: Math.max(115, Date.now() - startMs),
       modelCalled,
+      providerInputTokens,
+      providerOutputTokens,
     });
 
     const assistantTurn: ChatTurn = {
