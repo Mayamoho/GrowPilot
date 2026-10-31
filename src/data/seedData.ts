@@ -16,6 +16,7 @@ export interface GtmProspectPreset {
 
 export interface GtmPipelineRecord {
   id: string;
+  tenantId?: string;
   companyName: string;
   sourceUrl: string;
   industry: string;
@@ -50,6 +51,7 @@ export type AutomationDeliveryStatus = 'delivered' | 'failed' | 'not_configured'
 
 export interface CrmBookingRecord {
   id: string;
+  tenantId?: string;
   leadName: string;
   businessType: string;
   channel: 'WhatsApp Business' | 'Website Widget';

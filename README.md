@@ -609,5 +609,24 @@ The API now supports a zero-cost production hardening baseline without requiring
 
 GTM groundedness reports now include per-claim evidence spans and confidence labels. n8n delivery uses bounded exponential retries, optional HMAC signing via `N8N_WEBHOOK_SECRET`, and a persisted JSON outbox; authenticated operators can replay due deliveries with `POST /api/automation/retry`.
 
+### Connect n8n (free self-hosted setup)
+
+1. Open n8n and create or import the GrowPilot workflow from `n8n/growpilot-workflow.json`.
+2. Add a **Webhook** trigger with method `POST` and path `growpilot-lead`.
+3. Use the node's **Production URL**, publish/activate the workflow, and copy the complete URL. n8n has separate Test and Production URLs; the Production URL is registered when the workflow is published and production runs appear under **Executions**. See the [n8n Webhook documentation](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.webhook/).
+4. In the n8n Webhook node, choose Header Auth if you want n8n itself to reject callers without a credential. For this app's optional HMAC verification, create a long random secret and configure the same value in GrowPilot as `N8N_WEBHOOK_SECRET`.
+5. In Vercel, open the `growpilot` project → **Settings → Environment Variables** and add these variables for **Production**:
+
+   ```text
+   N8N_WEBHOOK_URL=https://<your-n8n-host>/webhook/growpilot-lead
+   N8N_WEBHOOK_SECRET=<long-random-secret>
+   N8N_MAX_ATTEMPTS=3
+   ```
+
+   Vercel applies environment-variable changes only to new deployments, so redeploy after saving. The same values can be added with `vercel env add` if you prefer the CLI. See [Vercel environment variables](https://vercel.com/docs/environment-variables).
+6. Send a test lead in GrowPilot. Confirm the n8n workflow execution is successful. If n8n is temporarily down, GrowPilot keeps the event in its outbox and an authenticated operator can call `POST /api/automation/retry` later.
+
+Authenticated API clients may send `X-Tenant-ID` to isolate CRM bookings, GTM records, sessions, and cache keys. If omitted, the tenant is `default`. Every request also receives an `X-Request-ID` response header for support and log correlation.
+
 For a free-tier Vercel deployment, configure those variables in Project Settings, deploy the backend and UI, then set the UI’s `VITE_BACKEND_URL` to the backend alias. Verify `GET /api/state` with the bearer key, an unauthenticated request returns `401`, and a repeated chat request with the same `Idempotency-Key` returns `X-Idempotent-Replay: true`.
 

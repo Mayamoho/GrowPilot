@@ -183,6 +183,14 @@ function getSessionId(raw: unknown, tenantId: string): string {
   return issueSessionId(tenantId);
 }
 
+function requestTenantId(req: express.Request): string {
+  return (req.header('x-tenant-id') || 'default').trim().slice(0, 80) || 'default';
+}
+
+function tenantOwns(record: { tenantId?: string }, tenantId: string): boolean {
+  return (record.tenantId || 'default') === tenantId;
+}
+
 let telemetryLedger = {
   totalRequests: 0,
   cacheHits: 0,
@@ -211,7 +219,7 @@ function loadPersistedState(): void {
 
     for (const rec of gtmRecordsStore) {
       if (rec.qualificationStatus === 'QUALIFIED_OUTBOUND' || rec.qualificationStatus === 'SKIPPED_LOW_ICP') {
-        const key = normalizeCacheKey(`${rec.companyName}_${rec.sourceUrl}_${rec.icpThreshold}`);
+        const key = `${rec.tenantId || 'default'}::${normalizeCacheKey(`${rec.companyName}_${rec.sourceUrl}_${rec.icpThreshold}`)}`;
         gtmCache.set(key, rec);
       }
     }
@@ -252,7 +260,7 @@ loadPersistedState();
 
 // Seed Layer 0 GTM cache with initial seed records not already restored.
 for (const rec of INITIAL_GTM_RECORDS) {
-  const key = normalizeCacheKey(`${rec.companyName}_${rec.sourceUrl}_${rec.icpThreshold}`);
+  const key = `${rec.tenantId || 'default'}::${normalizeCacheKey(`${rec.companyName}_${rec.sourceUrl}_${rec.icpThreshold}`)}`;
   if (!gtmCache.has(key)) gtmCache.set(key, rec);
 }
 
@@ -673,6 +681,12 @@ async function startServer() {
 
   app.use(express.json({ limit: '2mb' }));
   app.use((req, res, next) => {
+    const requestId = req.header('x-request-id')?.trim() || `req_${crypto.randomBytes(8).toString('hex')}`;
+    res.setHeader('X-Request-ID', requestId);
+    res.locals.requestId = requestId;
+    next();
+  });
+  app.use((req, res, next) => {
     const now = Date.now();
     const key = `${req.ip}:${requestAuthToken(req).slice(0, 16)}`;
     const bucket = requestBuckets.get(key);
@@ -692,17 +706,19 @@ async function startServer() {
   // 1. Get full application state & telemetry
   app.get('/api/state', (req, res) => {
     if (!authenticateRequest(req, res)) return;
+    const tenantId = requestTenantId(req);
     res.json({
       // CRM and prospect content is private. It is returned only to an authenticated operator.
       faqs: faqsStore,
-      gtmRecords: gtmRecordsStore,
-      crmBookings: crmBookingsStore,
+      gtmRecords: gtmRecordsStore.filter((record) => tenantOwns(record, tenantId)),
+      crmBookings: crmBookingsStore.filter((record) => tenantOwns(record, tenantId)),
       automation: {
         n8nConfigured: Boolean(N8N_WEBHOOK_URL),
         delivered: webhookLedger.delivered,
         failed: webhookLedger.failed,
         last: webhookLedger.last,
         pendingOutbox: webhookOutbox.length,
+        tenantId,
       },
       engine: {
         geminiConfigured: Boolean(getGenAIClient()),
@@ -783,6 +799,7 @@ async function startServer() {
   app.post('/api/gtm/analyze', async (req, res) => {
     if (!authenticateRequest(req, res)) return;
     const startMs = Date.now();
+    const tenantId = requestTenantId(req);
     const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
     const companyName = body.companyName === undefined ? 'Target Prospect' : body.companyName;
     const sourceUrl = body.sourceUrl === undefined ? 'https://example.com' : body.sourceUrl;
@@ -816,9 +833,7 @@ async function startServer() {
         ? modelPreference
         : 'gemini-3.8-flash';
 
-    const cacheKey = normalizeCacheKey(
-      `${companyName}_${sourceUrl}_${rawContent.slice(0, 160)}_${icpThreshold}`
-    );
+    const cacheKey = `${tenantId}::${normalizeCacheKey(`${companyName}_${sourceUrl}_${rawContent.slice(0, 160)}_${icpThreshold}`)}`;
 
     // Layer 0 Cache Check
     if (!bypassCache && gtmCache.has(cacheKey)) {
@@ -890,6 +905,7 @@ async function startServer() {
 
       const skippedRecord: GtmPipelineRecord = {
         id: `gtm-${Date.now()}`,
+        tenantId,
         companyName: companyName.trim(),
         sourceUrl: sourceUrl.trim(),
         industry: industry.trim(),
@@ -1123,6 +1139,7 @@ async function startServer() {
 
     const newRecord: GtmPipelineRecord = {
       id: `gtm-${Date.now()}`,
+      tenantId,
       companyName: companyName.trim(),
       sourceUrl: sourceUrl.trim(),
       industry: industry.trim(),
@@ -1212,7 +1229,7 @@ async function startServer() {
     }
     const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
     const message = body.message === undefined ? '' : body.message;
-    const tenantId = (req.header('x-tenant-id') || 'default').trim().slice(0, 80) || 'default';
+    const tenantId = requestTenantId(req);
     const sessionId = getSessionId(body.sessionId, tenantId);
     const modelPreference = body.modelPreference === undefined ? 'gemini-3.5-flash-lite' : body.modelPreference;
     const channel = body.channel === undefined ? 'WhatsApp Business' : body.channel;
@@ -1266,7 +1283,7 @@ async function startServer() {
           droppedTurns: 0,
           costMetrics,
         },
-        crmBookings: crmBookingsStore,
+        crmBookings: crmBookingsStore.filter((record) => tenantOwns(record, tenantId)),
         telemetry: telemetryLedger,
       };
       if (idempotencyKey) idempotencyResults.set(idempotencyKey, { expiresAt: Date.now() + IDEMPOTENCY_TTL_MS, result: blockedPayload });
@@ -1316,7 +1333,7 @@ async function startServer() {
           droppedTurns: windowResult.droppedCount,
           costMetrics,
         },
-        crmBookings: crmBookingsStore,
+        crmBookings: crmBookingsStore.filter((record) => tenantOwns(record, tenantId)),
         telemetry: telemetryLedger,
       };
       if (idempotencyKey) idempotencyResults.set(idempotencyKey, { expiresAt: Date.now() + IDEMPOTENCY_TTL_MS, result: faqPayload });
@@ -1440,6 +1457,7 @@ async function startServer() {
     if (extractedBudgetUsd > 0) {
       const newBooking: CrmBookingRecord = {
         id: `crm-${Date.now()}`,
+        tenantId,
         leadName:
           extractedBudgetUsd >= 500
             ? 'Qualified Prospect (Live Chat)'
@@ -1515,7 +1533,7 @@ async function startServer() {
         droppedTurns: finalWindow.droppedCount,
         costMetrics,
       },
-      crmBookings: crmBookingsStore,
+      crmBookings: crmBookingsStore.filter((record) => tenantOwns(record, tenantId)),
       telemetry: telemetryLedger,
     };
     if (idempotencyKey) {
@@ -1559,6 +1577,7 @@ async function startServer() {
 
   wss.on('connection', async (clientWs: WebSocket, request: http.IncomingMessage) => {
     const reqUrl = new URL(request.url || '/live', 'http://localhost:3000');
+    const tenantId = String(request.headers['x-tenant-id'] || 'default').trim().slice(0, 80) || 'default';
     const requestedVoice = reqUrl.searchParams.get('voice') || 'Zephyr';
     const validVoices = new Set(['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr']);
     const voiceName = validVoices.has(requestedVoice) ? requestedVoice : 'Zephyr';
@@ -1734,6 +1753,7 @@ async function startServer() {
 
                 const newBooking: CrmBookingRecord = {
                   id: `crm-live-${Date.now()}`,
+                  tenantId,
                   leadName: String(args.leadName || 'Voice Caller Lead'),
                   businessType: String(args.businessType || 'Voice Qualified Business'),
                   channel: 'WhatsApp Business',
@@ -1757,7 +1777,7 @@ async function startServer() {
                   JSON.stringify({
                     type: 'crm_booking',
                     booking: newBooking,
-                    crmBookings: crmBookingsStore,
+                    crmBookings: crmBookingsStore.filter((record) => tenantOwns(record, tenantId)),
                   })
                 );
 
@@ -1788,7 +1808,7 @@ async function startServer() {
                       JSON.stringify({
                         type: 'crm_booking',
                         booking: newBooking,
-                        crmBookings: crmBookingsStore,
+                        crmBookings: crmBookingsStore.filter((record) => tenantOwns(record, tenantId)),
                       })
                     );
                   }
