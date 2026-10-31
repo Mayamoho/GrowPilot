@@ -101,6 +101,7 @@ const LIVE_FUNCTION_PATH = process.env.GROWPILOT_FUNCTION_PATH?.trim() || '/api/
 // cold first run into the deterministic fallback, which is the tier local users hit most.
 const OLLAMA_TIMEOUT_MS = Math.max(5_000, Number(process.env.OLLAMA_TIMEOUT_MS || 120_000));
 const GEMINI_MAX_ATTEMPTS = Math.max(1, Number(process.env.GEMINI_MAX_ATTEMPTS || 4));
+const GEMINI_REQUEST_TIMEOUT_MS = Math.max(5_000, Number(process.env.GEMINI_REQUEST_TIMEOUT_MS || 25_000));
 // Unset keeps the quota degrade on. An explicit empty value (or 0/false) makes a quota-blocked
 // tier report the error instead of silently re-billing a cheaper model.
 const rawQuotaFallback = process.env.GEMINI_QUOTA_FALLBACK;
@@ -612,10 +613,14 @@ async function generateWithGemini(
   const attempt = async (model: string): Promise<GeminiResult> => {
     for (let tryNo = 1; ; tryNo++) {
       try {
-        const res = await ai.models.generateContent({
+        const generation = ai.models.generateContent({
           ...request,
           model,
         } as Parameters<GoogleGenAI['models']['generateContent']>[0]);
+        const timeout = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Gemini request timed out after ${GEMINI_REQUEST_TIMEOUT_MS}ms`)), GEMINI_REQUEST_TIMEOUT_MS)
+        );
+        const res = await Promise.race([generation, timeout]);
         const usage = res.usageMetadata as
           | { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number }
           | undefined;
@@ -629,6 +634,7 @@ async function generateWithGemini(
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         const quota = /exceeded your current quota|billing/i.test(message);
+        const unsupportedModel = /not found|404|does not exist|unknown model|invalid model/i.test(message);
         const transient =
           !quota &&
           /"(?:code|status)"\s*:\s*"?(429|500|503)|high demand|rate limit|unavailable|timed? ?out/i.test(
@@ -642,8 +648,8 @@ async function generateWithGemini(
           await new Promise((resolve) => setTimeout(resolve, backoffMs + Math.floor(Math.random() * 250)));
           continue;
         }
-        if (quota && fallbackModel && fallbackModel !== model) {
-          console.warn(`[${logTag}] ${model} is out of quota for this key — falling back to ${fallbackModel}`);
+        if ((quota || unsupportedModel) && fallbackModel && fallbackModel !== model) {
+          console.warn(`[${logTag}] ${model} ${unsupportedModel ? 'is unavailable' : 'is out of quota'} — falling back to ${fallbackModel}`);
           return attempt(fallbackModel);
         }
         throw err instanceof Error ? err : new Error(message);
@@ -1154,7 +1160,7 @@ async function startServer() {
               },
             },
             'gtm',
-            { fallbackModel: resolveApiModelId('gemini-3.5-flash-lite') }
+            { fallbackModel: resolveApiModelId('gemini-3.5-flash-lite'), maxAttempts: 2 }
           );
 
           if (result.degraded) {
@@ -1488,7 +1494,7 @@ async function startServer() {
                 },
               },
               'agent',
-              { fallbackModel: resolveApiModelId('gemini-3.5-flash-lite') }
+              { fallbackModel: resolveApiModelId('gemini-3.5-flash-lite'), maxAttempts: 2 }
             );
             if (result.degraded) {
               billedTier = 'gemini-3.5-flash-lite';

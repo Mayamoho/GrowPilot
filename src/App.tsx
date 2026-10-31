@@ -342,10 +342,13 @@ export default function App() {
     bypassCache: boolean;
   }): Promise<GtmPipelineRecord | null> => {
     setIsLoading(true);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 90_000);
     try {
       const res = await apiFetch('/api/gtm/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
@@ -371,6 +374,7 @@ export default function App() {
     } catch {
       return runClientSideGtmFallback(payload);
     } finally {
+      window.clearTimeout(timeout);
       setIsLoading(false);
     }
   };
