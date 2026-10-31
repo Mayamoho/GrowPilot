@@ -640,5 +640,23 @@ GTM groundedness reports now include per-claim evidence spans and confidence lab
 
 Authenticated API clients may send `X-Tenant-ID` to isolate CRM bookings, GTM records, sessions, and cache keys. If omitted, the tenant is `default`. Every request also receives an `X-Request-ID` response header for support and log correlation.
 
+### Optional free durable infrastructure
+
+The app now has provider adapters with local fallback. For durable Vercel state, create a free Supabase project and run:
+
+```sql
+create table if not exists public.growpilot_state (
+  tenant_id text primary key,
+  state jsonb not null,
+  updated_at timestamptz not null default now()
+);
+```
+
+Add `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_STATE_TABLE=growpilot_state` to Vercel Production. The service-role key must stay server-only. For distributed rate limiting and ephemeral coordination, create a free Upstash Redis database and add `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`. The API uses Upstash's HTTPS REST interface, so it works from Vercel without a TCP Redis connection. [Upstash REST API](https://upstash.com/docs/redis/features/restapi) and [Supabase Free Plan](https://supabase.com/docs/guides/platform/billing-on-supabase).
+
+When these variables are absent, GrowPilot continues using the local JSON/process-local fallback and reports the active mode in `GET /api/state.engine.infrastructure`.
+
+Every HTTP response now carries an `X-Request-ID` and W3C `traceparent` header, while the server writes structured `http_span` JSON logs. This is OpenTelemetry-compatible correlation without requiring a paid collector; set `OTEL_EXPORTER_OTLP_ENDPOINT` only when you have a free/self-hosted OTLP collector available. [OpenTelemetry JavaScript](https://opentelemetry.io/docs/languages/js/)
+
 For a free-tier Vercel deployment, configure those variables in Project Settings, deploy the backend and UI, then set the UI’s `VITE_BACKEND_URL` to the backend alias. Verify `GET /api/state` with the bearer key, an unauthenticated request returns `401`, and a repeated chat request with the same `Idempotency-Key` returns `X-Idempotent-Replay: true`.
 

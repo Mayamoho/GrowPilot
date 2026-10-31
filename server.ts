@@ -47,6 +47,12 @@ import {
   type CrmBookingRecord,
   type AutomationDeliveryStatus,
 } from './src/data/seedData.ts';
+import {
+  checkRedisRateLimit,
+  infrastructureStatus,
+  loadSupabaseState,
+  saveSupabaseState,
+} from './src/utils/freeInfrastructure.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -229,6 +235,23 @@ function loadPersistedState(): void {
   }
 }
 
+async function hydrateSupabaseState(): Promise<void> {
+  const remote = await loadSupabaseState<{
+    faqs?: FaqItem[];
+    gtmRecords?: GtmPipelineRecord[];
+    crmBookings?: CrmBookingRecord[];
+    telemetry?: Partial<typeof telemetryLedger>;
+    webhookOutbox?: WebhookOutboxItem[];
+  }>();
+  if (!remote) return;
+  if (Array.isArray(remote.faqs) && remote.faqs.length) faqsStore = remote.faqs;
+  if (Array.isArray(remote.gtmRecords)) gtmRecordsStore = remote.gtmRecords;
+  if (Array.isArray(remote.crmBookings)) crmBookingsStore = remote.crmBookings;
+  if (remote.telemetry) telemetryLedger = { ...telemetryLedger, ...remote.telemetry };
+  if (Array.isArray(remote.webhookOutbox)) webhookOutbox = remote.webhookOutbox.slice(0, 500);
+  console.log(`[state] hydrated Supabase snapshot (${gtmRecordsStore.length} GTM records, ${crmBookingsStore.length} bookings)`);
+}
+
 let persistTimer: NodeJS.Timeout | null = null;
 function persistState(): void {
   if (persistTimer) clearTimeout(persistTimer);
@@ -249,6 +272,13 @@ function persistState(): void {
           2
         )
       );
+      void saveSupabaseState({
+        faqs: faqsStore,
+        gtmRecords: gtmRecordsStore.slice(0, 200),
+        crmBookings: crmBookingsStore.slice(0, 200),
+        telemetry: telemetryLedger,
+        webhookOutbox: webhookOutbox.slice(0, 500),
+      });
     } catch (err) {
       console.warn('[state] persist failed:', err);
     }
@@ -661,6 +691,7 @@ const httpServer = http.createServer(app);
 
 async function startServer() {
   const PORT = Number(process.env.PORT || 3000);
+  await hydrateSupabaseState();
 
   app.use((req, res, next) => {
     const origin = req.headers.origin;
@@ -682,13 +713,37 @@ async function startServer() {
   app.use(express.json({ limit: '2mb' }));
   app.use((req, res, next) => {
     const requestId = req.header('x-request-id')?.trim() || `req_${crypto.randomBytes(8).toString('hex')}`;
+    const incomingTrace = req.header('traceparent')?.match(/^00-([\da-f]{32})-([\da-f]{16})-([\da-f]{2})$/i);
+    const traceId = incomingTrace?.[1] || crypto.randomBytes(16).toString('hex');
+    const spanId = crypto.randomBytes(8).toString('hex');
+    const startedAt = Date.now();
     res.setHeader('X-Request-ID', requestId);
+    res.setHeader('traceparent', `00-${traceId}-${spanId}-01`);
     res.locals.requestId = requestId;
+    res.locals.traceId = traceId;
+    res.on('finish', () => {
+      console.log(JSON.stringify({
+        type: 'http_span',
+        traceId,
+        spanId,
+        requestId,
+        method: req.method,
+        path: req.path,
+        status: res.statusCode,
+        durationMs: Date.now() - startedAt,
+      }));
+    });
     next();
   });
-  app.use((req, res, next) => {
+  app.use(async (req, res, next) => {
     const now = Date.now();
     const key = `${req.ip}:${requestAuthToken(req).slice(0, 16)}`;
+    const distributedAllowed = await checkRedisRateLimit(key, MAX_REQUESTS_PER_WINDOW, RATE_LIMIT_WINDOW_MS);
+    if (distributedAllowed === false) {
+      res.setHeader('Retry-After', String(Math.ceil(RATE_LIMIT_WINDOW_MS / 1000)));
+      res.status(429).json({ error: 'Distributed rate limit exceeded. Please retry shortly.' });
+      return;
+    }
     const bucket = requestBuckets.get(key);
     if (!bucket || now - bucket.startedAt >= RATE_LIMIT_WINDOW_MS) {
       requestBuckets.set(key, { startedAt: now, count: 1 });
@@ -724,6 +779,7 @@ async function startServer() {
         geminiConfigured: Boolean(getGenAIClient()),
         ollamaBaseUrl: OLLAMA_BASE_URL,
         liveModel: LIVE_MODEL_ID,
+        infrastructure: infrastructureStatus(),
       },
       telemetry: {
         ...telemetryLedger,
