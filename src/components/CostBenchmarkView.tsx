@@ -41,6 +41,9 @@ export const CostBenchmarkView: React.FC = () => {
         <p className="text-sm text-slate-600 mt-1.5 max-w-3xl">
           Use the sliders below to test your own monthly message volume. You can see exactly how answering common FAQs from cache, stripping HTML clutter, and picking smaller models cuts your monthly API bill by over 98%.
         </p>
+        <p className="text-xs text-slate-500 mt-2 max-w-3xl">
+          This lab is a scenario simulator: monthly figures are projections from your inputs and the configured price table. Runtime turns separately label provider-reported usage, estimated usage, or no model billed.
+        </p>
       </div>
 
       {/* 2-Column Split: Left = Interactive Volume & Caching Controls, Right = Live Model Tier Comparison Table */}
@@ -249,6 +252,10 @@ export const CostBenchmarkView: React.FC = () => {
             <span className="font-mono font-semibold">{monthlyConversations.toLocaleString()}</span> monthly customer conversations for under{' '}
             <span className="font-mono font-semibold">$0.50/month</span> instead of{' '}
             <span className="font-mono font-semibold">${unoptimizedMonthlyUsd.toFixed(2)}/month</span>.
+          </div>
+          <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-950">
+            <span className="font-semibold">Accounting note: </span>
+            provider-reported token usage is authoritative when the provider returns it; otherwise GrowPilot marks the turn as estimated. Cache hits and deterministic fallbacks are explicitly shown as no model billed.
           </div>
         </section>
       </div>

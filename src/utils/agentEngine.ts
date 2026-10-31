@@ -283,6 +283,10 @@ export interface CostMetrics {
   baselineFrontierCostUsd: number;
   costSavedUsd: number;
   latencyMs: number;
+  /** Runtime usage provenance: provider is authoritative, estimated is character/token math. */
+  usageSource?: 'provider' | 'estimated' | 'none';
+  providerInputTokens?: number;
+  providerOutputTokens?: number;
 }
 
 export function calculateRunCost(params: {
@@ -329,6 +333,7 @@ export function calculateRunCost(params: {
     baselineFrontierCostUsd: Number(baselineFrontierCostUsd.toFixed(6)),
     costSavedUsd: Number(costSavedUsd.toFixed(6)),
     latencyMs: params.latencyMs ?? (params.cacheHit ? 3 : spec.avgLatencyMs),
+    usageSource: modelCalled ? 'estimated' : 'none',
   };
 }
 

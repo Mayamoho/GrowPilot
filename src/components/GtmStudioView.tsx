@@ -451,7 +451,9 @@ export const GtmStudioView: React.FC<GtmStudioViewProps> = ({
                   </div>
                   <div className="h-8 w-px bg-slate-200" />
                   <div>
-                    <div className="text-[11px] text-slate-500">Run Cost (USD)</div>
+                    <div className="text-[11px] text-slate-500">
+                      Run Cost ({activeRecord.costMetrics.usageSource === 'provider' ? 'provider-reported' : activeRecord.costMetrics.usageSource === 'none' ? 'no model billed' : 'estimated'} USD)
+                    </div>
                     <div className="text-lg font-mono font-bold tabular-nums text-slate-900">
                       ${activeRecord.costMetrics.estimatedCostUsd.toFixed(6)}
                     </div>
@@ -714,6 +716,29 @@ export const GtmStudioView: React.FC<GtmStudioViewProps> = ({
                             </span>
                           </div>
                         ))}
+                      </div>
+                      <div className="pt-3 mt-2 border-t border-slate-200">
+                        <div className="text-xs font-semibold text-slate-800 mb-2">
+                          Claim-level evidence map
+                        </div>
+                        {activeRecord.groundednessReport.claimEvidence?.length ? (
+                          <div className="space-y-2">
+                            {activeRecord.groundednessReport.claimEvidence.map((claim, index) => (
+                              <div key={`${claim.claim}-${index}`} className="rounded border border-slate-200 bg-white p-2 text-xs">
+                                <div className="flex items-start justify-between gap-2">
+                                  <span className="font-medium text-slate-800">{claim.claim}</span>
+                                  <span className={`shrink-0 font-mono font-semibold ${claim.status === 'supported' ? 'text-emerald-700' : claim.status === 'contradicted' ? 'text-red-700' : 'text-amber-700'}`}>
+                                    {claim.status.replace('_', ' ').toUpperCase()}
+                                  </span>
+                                </div>
+                                <div className="mt-1 text-slate-600">Evidence: {claim.evidence}</div>
+                                <div className="mt-1 font-mono text-slate-500">confidence {Math.round(claim.confidence * 100)}%</div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-slate-500">No claim-level evidence was returned for this run.</p>
+                        )}
                       </div>
                     </div>
                   )}

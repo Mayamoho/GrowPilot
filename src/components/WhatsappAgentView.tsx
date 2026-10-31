@@ -394,7 +394,9 @@ export const WhatsappAgentView: React.FC<WhatsappAgentViewProps> = ({
                 </div>
               </div>
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
-                <div className="text-[11px] text-slate-500">Turn Token Cost</div>
+                <div className="text-[11px] text-slate-500">
+                  Turn Token Cost ({latestTrace.costMetrics.usageSource === 'provider' ? 'provider' : latestTrace.costMetrics.usageSource === 'none' ? 'no model' : 'estimated'})
+                </div>
                 <div className="text-sm font-mono font-bold tabular-nums text-teal-800 mt-0.5">
                   ${latestTrace.costMetrics.estimatedCostUsd.toFixed(7)}
                 </div>
