@@ -116,6 +116,7 @@ test('verifyGroundedness 5-layer gate passes truthful claims and catches fabrica
   });
   assert.equal(cleanAudit.passed, true);
   assert.equal(cleanAudit.blockedHallucinationsCount, 0);
+  assert.equal(cleanAudit.claimEvidence?.every((claim) => claim.status === 'supported'), true);
 
   const hallucinatedAudit = verifyGroundedness({
     sourceText,

@@ -607,5 +607,7 @@ Shows a side-by-side comparison of a **Typical Bloated Prompt (`1,180 Tokens` â€
 
 The API now supports a zero-cost production hardening baseline without requiring PostgreSQL or Redis: set `GROWPILOT_API_KEY` on the backend and the same value as `VITE_GROWPILOT_API_KEY` at frontend build time. API calls use a bearer key, live voice uses the key in its WebSocket handshake, mutating/chat routes are rate limited, chat sessions are server-issued and expire after 30 minutes, and `Idempotency-Key` safely replays a completed chat request. Set `ALLOWED_ORIGINS` to the exact Vercel UI origins (comma-separated). Keep the local JSON store only for demos; move it to managed Postgres/Redis when durable multi-instance data is needed.
 
+GTM groundedness reports now include per-claim evidence spans and confidence labels. n8n delivery uses bounded exponential retries, optional HMAC signing via `N8N_WEBHOOK_SECRET`, and a persisted JSON outbox; authenticated operators can replay due deliveries with `POST /api/automation/retry`.
+
 For a free-tier Vercel deployment, configure those variables in Project Settings, deploy the backend and UI, then set the UIâ€™s `VITE_BACKEND_URL` to the backend alias. Verify `GET /api/state` with the bearer key, an unauthenticated request returns `401`, and a repeated chat request with the same `Idempotency-Key` returns `X-Idempotent-Replay: true`.
 

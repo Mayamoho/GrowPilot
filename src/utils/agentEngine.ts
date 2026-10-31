@@ -451,12 +451,20 @@ export interface GroundednessLayerCheck {
   detail: string;
 }
 
+export interface ClaimEvidence {
+  claim: string;
+  status: 'supported' | 'contradicted' | 'insufficient_evidence';
+  evidence: string;
+  confidence: number;
+}
+
 export interface GroundednessReport {
   passed: boolean;
   scorePct: number;
   verifiedClaimsCount: number;
   blockedHallucinationsCount: number;
   layerChecks: GroundednessLayerCheck[];
+  claimEvidence?: ClaimEvidence[];
 }
 
 /**
@@ -581,12 +589,32 @@ export function verifyGroundedness(params: {
   const blockedHallucinationsCount =
     unverifiedNumbers.length + fabricatedMatches.length + (injectionPassed ? 0 : 1);
 
+  const evidenceSource = `${params.sourceText} ${params.extractedFacts.join(' ')}`.trim();
+  const sourceSentences = evidenceSource
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length > 12);
+  const claimEvidence: ClaimEvidence[] = params.extractedFacts.slice(0, 20).map((claim) => {
+    const words = claim.toLowerCase().split(/\W+/).filter((word) => word.length > 4);
+    const match = sourceSentences.find((sentence) => {
+      const lower = sentence.toLowerCase();
+      return words.length > 0 && words.filter((word) => lower.includes(word)).length >= Math.min(3, words.length);
+    });
+    return {
+      claim,
+      status: match ? 'supported' : 'insufficient_evidence',
+      evidence: match ? match.slice(0, 280) : 'No matching source span found.',
+      confidence: match ? 0.85 : 0.2,
+    };
+  });
+
   return {
     passed: passedCount === layerChecks.length,
     scorePct: Math.round((passedCount / layerChecks.length) * 100),
     verifiedClaimsCount: verifiedFacts + (entityPassed ? 1 : 0),
     blockedHallucinationsCount,
     layerChecks,
+    claimEvidence,
   };
 }
 

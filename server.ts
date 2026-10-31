@@ -70,6 +70,8 @@ const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434'
   ''
 );
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL?.trim() || '';
+const N8N_WEBHOOK_SECRET = process.env.N8N_WEBHOOK_SECRET?.trim() || '';
+const WEBHOOK_MAX_ATTEMPTS = Math.max(1, Number(process.env.N8N_MAX_ATTEMPTS || 3));
 // The Vercel-hosted UI calls this agent from a different origin, so the browser needs an
 // explicit permit. Empty allowlist = any origin; pin it with ALLOWED_ORIGINS once the
 // backend is public, because anyone who can reach this server can spend GEMINI_API_KEY.
@@ -133,6 +135,15 @@ let gtmRecordsStore: GtmPipelineRecord[] = [...INITIAL_GTM_RECORDS];
 let crmBookingsStore: CrmBookingRecord[] = [...INITIAL_CRM_BOOKINGS];
 const gtmCache = new Map<string, GtmPipelineRecord>();
 const sessionHistoryStore = new Map<string, ChatTurn[]>();
+type WebhookOutboxItem = {
+  id: string;
+  event: string;
+  payload: Record<string, unknown>;
+  attempts: number;
+  nextAttemptAt: string;
+  lastError?: string;
+};
+let webhookOutbox: WebhookOutboxItem[] = [];
 
 function constantTimeEqual(left: string, right: string): boolean {
   const a = Buffer.from(left);
@@ -188,6 +199,7 @@ function loadPersistedState(): void {
       gtmRecords?: GtmPipelineRecord[];
       crmBookings?: CrmBookingRecord[];
       telemetry?: Partial<typeof telemetryLedger>;
+      webhookOutbox?: WebhookOutboxItem[];
     };
     if (Array.isArray(parsed.faqs) && parsed.faqs.length > 0) faqsStore = parsed.faqs;
     if (Array.isArray(parsed.gtmRecords) && parsed.gtmRecords.length > 0) {
@@ -195,6 +207,7 @@ function loadPersistedState(): void {
     }
     if (Array.isArray(parsed.crmBookings)) crmBookingsStore = parsed.crmBookings;
     if (parsed.telemetry) telemetryLedger = { ...telemetryLedger, ...parsed.telemetry };
+    if (Array.isArray(parsed.webhookOutbox)) webhookOutbox = parsed.webhookOutbox.slice(0, 500);
 
     for (const rec of gtmRecordsStore) {
       if (rec.qualificationStatus === 'QUALIFIED_OUTBOUND' || rec.qualificationStatus === 'SKIPPED_LOW_ICP') {
@@ -222,6 +235,7 @@ function persistState(): void {
             gtmRecords: gtmRecordsStore.slice(0, 200),
             crmBookings: crmBookingsStore.slice(0, 200),
             telemetry: telemetryLedger,
+            webhookOutbox: webhookOutbox.slice(0, 500),
           },
           null,
           2
@@ -320,6 +334,7 @@ interface WebhookDelivery {
   statusCode?: number;
   error?: string;
   attemptedAt: string;
+  attempts?: number;
 }
 
 const webhookLedger: { last: WebhookDelivery | null; delivered: number; failed: number } = {
@@ -335,16 +350,19 @@ const webhookLedger: { last: WebhookDelivery | null; delivered: number; failed: 
  */
 async function dispatchToN8n(
   event: string,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  options: { enqueueOnFailure?: boolean } = {}
 ): Promise<WebhookDelivery> {
   const attemptedAt = new Date().toISOString();
   if (!N8N_WEBHOOK_URL) {
     return { configured: false, delivered: false, error: 'N8N_WEBHOOK_URL not set', attemptedAt };
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 6000);
-  try {
+  let lastDelivery: WebhookDelivery | null = null;
+  for (let attempt = 1; attempt <= WEBHOOK_MAX_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    try {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const user = process.env.N8N_USER?.trim();
     const password = process.env.N8N_PASSWORD?.trim();
@@ -352,10 +370,14 @@ async function dispatchToN8n(
       headers.Authorization = `Basic ${Buffer.from(`${user}:${password}`).toString('base64')}`;
     }
 
+    const body = JSON.stringify({ event, source: 'growpilot', timestamp: attemptedAt, ...payload });
+    if (N8N_WEBHOOK_SECRET) {
+      headers['X-GrowPilot-Signature'] = `sha256=${crypto.createHmac('sha256', N8N_WEBHOOK_SECRET).update(body).digest('hex')}`;
+    }
     const res = await fetch(N8N_WEBHOOK_URL, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ event, source: 'growpilot', timestamp: attemptedAt, ...payload }),
+      body,
       signal: controller.signal,
     });
 
@@ -381,26 +403,44 @@ async function dispatchToN8n(
       statusCode: res.status,
       error: res.ok ? undefined : errorText,
       attemptedAt,
+      attempts: attempt,
     };
+    lastDelivery = delivery;
     webhookLedger.last = delivery;
-    if (delivery.delivered) webhookLedger.delivered += 1;
-    else webhookLedger.failed += 1;
-    if (!delivery.delivered) console.warn('[n8n] webhook delivery failed:', delivery.error);
-    return delivery;
+    if (delivery.delivered) {
+      webhookLedger.delivered += 1;
+      return delivery;
+    }
+    if (attempt < WEBHOOK_MAX_ATTEMPTS) await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** (attempt - 1)));
   } catch (err) {
-    const delivery: WebhookDelivery = {
+    lastDelivery = {
       configured: true,
       delivered: false,
       error: err instanceof Error ? err.message : String(err),
       attemptedAt,
+      attempts: attempt,
     };
-    webhookLedger.last = delivery;
-    webhookLedger.failed += 1;
-    console.warn('[n8n] webhook unreachable:', delivery.error);
-    return delivery;
+    if (attempt < WEBHOOK_MAX_ATTEMPTS) await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** (attempt - 1)));
   } finally {
     clearTimeout(timer);
   }
+  }
+  const delivery = lastDelivery || { configured: true, delivered: false, error: 'No delivery attempt completed', attemptedAt };
+  webhookLedger.last = delivery;
+  webhookLedger.failed += 1;
+  if (options.enqueueOnFailure !== false) {
+    webhookOutbox = [...webhookOutbox, {
+      id: `outbox-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
+      event,
+      payload,
+      attempts: delivery.attempts || WEBHOOK_MAX_ATTEMPTS,
+      nextAttemptAt: new Date(Date.now() + 60_000).toISOString(),
+      lastError: delivery.error,
+    }].slice(-500);
+    persistState();
+  }
+  console.warn('[n8n] webhook delivery failed:', delivery.error);
+  return delivery;
 }
 
 /** Shared shape every downstream n8n flow can rely on. */
@@ -662,6 +702,7 @@ async function startServer() {
         delivered: webhookLedger.delivered,
         failed: webhookLedger.failed,
         last: webhookLedger.last,
+        pendingOutbox: webhookOutbox.length,
       },
       engine: {
         geminiConfigured: Boolean(getGenAIClient()),
@@ -687,6 +728,26 @@ async function startServer() {
       cleared: true,
       message: 'Layer 0 GTM cache cleared. Next identical request will run a fresh model pass.',
     });
+  });
+
+  app.post('/api/automation/retry', async (req, res) => {
+    if (!authenticateRequest(req, res)) return;
+    const now = Date.now();
+    const due = webhookOutbox.filter((item) => Date.parse(item.nextAttemptAt) <= now).slice(0, 20);
+    const remaining: WebhookOutboxItem[] = [];
+    let delivered = 0;
+    for (const item of webhookOutbox) {
+      if (!due.includes(item)) {
+        remaining.push(item);
+        continue;
+      }
+      const result = await dispatchToN8n(item.event, item.payload, { enqueueOnFailure: false });
+      if (result.delivered) delivered += 1;
+      else remaining.push({ ...item, attempts: item.attempts + 1, nextAttemptAt: new Date(Date.now() + Math.min(3_600_000, 60_000 * 2 ** Math.min(item.attempts, 6))).toISOString(), lastError: result.error });
+    }
+    webhookOutbox = remaining;
+    persistState();
+    res.json({ retried: due.length, delivered, pendingOutbox: webhookOutbox.length });
   });
 
   // 3. Add a custom FAQ to the Layer 0 Knowledge Base
