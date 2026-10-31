@@ -102,6 +102,7 @@ const LIVE_FUNCTION_PATH = process.env.GROWPILOT_FUNCTION_PATH?.trim() || '/api/
 const OLLAMA_TIMEOUT_MS = Math.max(5_000, Number(process.env.OLLAMA_TIMEOUT_MS || 120_000));
 const GEMINI_MAX_ATTEMPTS = Math.max(1, Number(process.env.GEMINI_MAX_ATTEMPTS || 4));
 const GEMINI_REQUEST_TIMEOUT_MS = Math.max(5_000, Number(process.env.GEMINI_REQUEST_TIMEOUT_MS || 25_000));
+const GEMINI_GTM_MAX_ATTEMPTS = Math.max(1, Number(process.env.GEMINI_GTM_MAX_ATTEMPTS || 2));
 // Unset keeps the quota degrade on. An explicit empty value (or 0/false) makes a quota-blocked
 // tier report the error instead of silently re-billing a cheaper model.
 const rawQuotaFallback = process.env.GEMINI_QUOTA_FALLBACK;
@@ -648,7 +649,7 @@ async function generateWithGemini(
           await new Promise((resolve) => setTimeout(resolve, backoffMs + Math.floor(Math.random() * 250)));
           continue;
         }
-        if ((quota || unsupportedModel) && fallbackModel && fallbackModel !== model) {
+        if ((quota || unsupportedModel || transient) && fallbackModel && fallbackModel !== model) {
           console.warn(`[${logTag}] ${model} ${unsupportedModel ? 'is unavailable' : 'is out of quota'} — falling back to ${fallbackModel}`);
           return attempt(fallbackModel);
         }
@@ -1160,7 +1161,7 @@ async function startServer() {
               },
             },
             'gtm',
-            { fallbackModel: resolveApiModelId('gemini-3.5-flash-lite'), maxAttempts: 2 }
+            { fallbackModel: resolveApiModelId('gemini-3.5-flash-lite'), maxAttempts: GEMINI_GTM_MAX_ATTEMPTS }
           );
 
           if (result.degraded) {
@@ -1180,7 +1181,7 @@ async function startServer() {
           }
         } catch (err) {
           notes.push(
-            `Generation failed on ${resolveApiModelId(selectedTier)} after ${GEMINI_MAX_ATTEMPTS} attempt(s): ` +
+              `Generation failed on ${resolveApiModelId(selectedTier)} after ${GEMINI_GTM_MAX_ATTEMPTS} attempt(s) plus fallback: ` +
               (err instanceof Error ? err.message : String(err))
           );
           console.error(`[gtm] ${resolveApiModelId(selectedTier)} generation failed:`, err);
