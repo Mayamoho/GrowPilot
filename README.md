@@ -652,7 +652,7 @@ create table if not exists public.growpilot_state (
 );
 ```
 
-Add `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_STATE_TABLE=growpilot_state` to Vercel Production. The service-role key must stay server-only. For distributed rate limiting and ephemeral coordination, create a free Upstash Redis database and add `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`. The API uses Upstash's HTTPS REST interface, so it works from Vercel without a TCP Redis connection. [Upstash REST API](https://upstash.com/docs/redis/features/restapi) and [Supabase Free Plan](https://supabase.com/docs/guides/platform/billing-on-supabase).
+Add `SUPABASE_URL`, `SUPABASE_SECRET_KEY` (the new `sb_secret_...` key; legacy `SUPABASE_SERVICE_ROLE_KEY` also works), and `SUPABASE_STATE_TABLE=growpilot_state` to Vercel Production. The secret/service-role key must stay server-only. For distributed rate limiting and ephemeral coordination, create a free Upstash Redis database and add `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`. The API uses Upstash's HTTPS REST interface, so it works from Vercel without a TCP Redis connection. [Upstash REST API](https://upstash.com/docs/redis/features/restapi) and [Supabase Free Plan](https://supabase.com/docs/guides/platform/billing-on-supabase).
 
 When these variables are absent, GrowPilot continues using the local JSON/process-local fallback and reports the active mode in `GET /api/state.engine.infrastructure`.
 

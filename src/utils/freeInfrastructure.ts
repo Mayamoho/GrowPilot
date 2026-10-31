@@ -1,7 +1,7 @@
 /** Optional free-tier infrastructure adapters. All functions fail closed to the local fallback. */
 
 const SUPABASE_URL = process.env.SUPABASE_URL?.replace(/\/$/, '') || '';
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const SUPABASE_STATE_TABLE = process.env.SUPABASE_STATE_TABLE || 'growpilot_state';
 const UPSTASH_REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL?.replace(/\/$/, '') || '';
 const UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || '';
