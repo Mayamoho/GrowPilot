@@ -102,7 +102,7 @@ const LIVE_FUNCTION_PATH = process.env.GROWPILOT_FUNCTION_PATH?.trim() || '/api/
 const OLLAMA_TIMEOUT_MS = Math.max(5_000, Number(process.env.OLLAMA_TIMEOUT_MS || 120_000));
 const GEMINI_MAX_ATTEMPTS = Math.max(1, Number(process.env.GEMINI_MAX_ATTEMPTS || 4));
 const GEMINI_REQUEST_TIMEOUT_MS = Math.max(5_000, Number(process.env.GEMINI_REQUEST_TIMEOUT_MS || 25_000));
-const GEMINI_GTM_MAX_ATTEMPTS = Math.max(1, Number(process.env.GEMINI_GTM_MAX_ATTEMPTS || 2));
+const GEMINI_GTM_MAX_ATTEMPTS = Math.max(1, Number(process.env.GEMINI_GTM_MAX_ATTEMPTS || 1));
 const GEMINI_GTM_TIMEOUT_MS = Math.max(5_000, Number(process.env.GEMINI_GTM_TIMEOUT_MS || 12_000));
 // Unset keeps the quota degrade on. An explicit empty value (or 0/false) makes a quota-blocked
 // tier report the error instead of silently re-billing a cheaper model.
