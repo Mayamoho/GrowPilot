@@ -603,3 +603,9 @@ Shows a side-by-side comparison of a **Typical Bloated Prompt (`1,180 Tokens` �
 | Named tunnel hostname answers **404 from Vercel** (or a `CNAME` you didn't set) while `cloudflared` logs `Registered with connection` | Your domain's nameservers are not Cloudflare's, so Cloudflare never receives the request: check `dig +short NS yourdomain.xyz`. Tunnel public hostnames only work for zones delegated to `ns1.cloudflare.net` / `ns2.cloudflare.net`. Use the `trycloudflare.com` quick tunnel instead, or migrate the zone to Cloudflare first. |
 | `permission denied while trying to connect to the Docker API socket` | Your shell user is not in the `docker` group. Run `sudo usermod -aG docker $USER`, then sign out and back in (or `newgrp docker`). This blocks `docker compose` and `docker exec`, but not `npm run dev` — the Node path needs no Docker at all. |
 
+# GrowPilot 2.0 security and free deployment baseline
+
+The API now supports a zero-cost production hardening baseline without requiring PostgreSQL or Redis: set `GROWPILOT_API_KEY` on the backend and the same value as `VITE_GROWPILOT_API_KEY` at frontend build time. API calls use a bearer key, live voice uses the key in its WebSocket handshake, mutating/chat routes are rate limited, chat sessions are server-issued and expire after 30 minutes, and `Idempotency-Key` safely replays a completed chat request. Set `ALLOWED_ORIGINS` to the exact Vercel UI origins (comma-separated). Keep the local JSON store only for demos; move it to managed Postgres/Redis when durable multi-instance data is needed.
+
+For a free-tier Vercel deployment, configure those variables in Project Settings, deploy the backend and UI, then set the UI’s `VITE_BACKEND_URL` to the backend alias. Verify `GET /api/state` with the bearer key, an unauthenticated request returns `401`, and a repeated chat request with the same `Idempotency-Key` returns `X-Idempotent-Replay: true`.
+

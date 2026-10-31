@@ -27,7 +27,7 @@ import {
   type ModelTierId,
   type ChatTurn,
 } from './utils/agentEngine';
-import { apiUrl, backendOrigin, saveBackendOrigin } from './utils/backend';
+import { apiUrl, apiFetch, backendOrigin, saveBackendOrigin } from './utils/backend';
 
 interface TelemetrySummary {
   totalRequests: number;
@@ -119,7 +119,7 @@ export default function App() {
 
   const loadServerState = async () => {
     try {
-      const res = await fetch(apiUrl('/api/state'));
+      const res = await apiFetch('/api/state');
       const data = res.ok ? await res.json() : null;
       if (data && typeof data === 'object') {
         if (data.faqs) setFaqs(data.faqs);
@@ -343,7 +343,7 @@ export default function App() {
   }): Promise<GtmPipelineRecord | null> => {
     setIsLoading(true);
     try {
-      const res = await fetch(apiUrl('/api/gtm/analyze'), {
+      const res = await apiFetch('/api/gtm/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -378,7 +378,7 @@ export default function App() {
   const handleClearCache = async () => {
     setClientGtmCache({});
     try {
-      await fetch(apiUrl('/api/cache/clear'), { method: 'POST' });
+      await apiFetch('/api/cache/clear', { method: 'POST' });
     } catch {
       // ignore on static host
     }
@@ -552,7 +552,7 @@ export default function App() {
   }): Promise<{ reply: string; trace: AgentTrace } | null> => {
     setIsLoading(true);
     try {
-      const res = await fetch(apiUrl('/api/agent/chat'), {
+      const res = await apiFetch('/api/agent/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -599,7 +599,7 @@ export default function App() {
     };
 
     try {
-      const res = await fetch(apiUrl('/api/faq/add'), {
+      const res = await apiFetch('/api/faq/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

@@ -48,13 +48,32 @@ export function apiUrl(path: string): string {
   return origin ? `${origin}${path}` : path;
 }
 
+/** Adds the optional deployment API key without ever hard-coding credentials in source. */
+export function apiHeaders(extra: HeadersInit = {}): HeadersInit {
+  const key = import.meta.env.VITE_GROWPILOT_API_KEY?.trim();
+  return {
+    ...(key ? { Authorization: `Bearer ${key}` } : {}),
+    ...extra,
+  };
+}
+
+export function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(apiUrl(input), { ...init, headers: apiHeaders(init.headers) });
+}
+
 export function wsUrl(pathWithQuery: string): string {
   const origin = backendOrigin();
   if (!origin) {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${window.location.host}${pathWithQuery}`;
+    const url = new URL(`${proto}//${window.location.host}${pathWithQuery}`);
+    const key = import.meta.env.VITE_GROWPILOT_API_KEY?.trim();
+    if (key) url.searchParams.set('apiKey', key);
+    return url.toString();
   }
   const url = new URL(origin);
   const proto = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${url.host}${pathWithQuery}`;
+  const ws = new URL(`${proto}//${url.host}${pathWithQuery}`);
+  const key = import.meta.env.VITE_GROWPILOT_API_KEY?.trim();
+  if (key) ws.searchParams.set('apiKey', key);
+  return ws.toString();
 }

@@ -9,6 +9,7 @@ import fs from 'fs';
 import dns from 'node:dns/promises';
 import net from 'node:net';
 import { fileURLToPath } from 'url';
+import crypto from 'node:crypto';
 import {
   GoogleGenAI,
   LiveServerMessage,
@@ -76,6 +77,14 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
+const API_AUTH_TOKEN = process.env.GROWPILOT_API_KEY?.trim() || '';
+const AUTH_REQUIRED = Boolean(API_AUTH_TOKEN) || process.env.VERCEL === '1';
+const MAX_REQUESTS_PER_WINDOW = Math.max(30, Number(process.env.RATE_LIMIT_MAX || 120));
+const RATE_LIMIT_WINDOW_MS = Math.max(10_000, Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000));
+const requestBuckets = new Map<string, { startedAt: number; count: number }>();
+const sessionTokens = new Map<string, { tenantId: string; expiresAt: number }>();
+const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+const idempotencyResults = new Map<string, { expiresAt: number; result: unknown }>();
 // Where the serverless deployment puts this same server. vercel.json rewrites /live onto it, and
 // the upgrade handler takes either spelling because a rewrite may hand over the destination path.
 const LIVE_FUNCTION_PATH = process.env.GROWPILOT_FUNCTION_PATH?.trim() || '/api/live';
@@ -124,6 +133,44 @@ let gtmRecordsStore: GtmPipelineRecord[] = [...INITIAL_GTM_RECORDS];
 let crmBookingsStore: CrmBookingRecord[] = [...INITIAL_CRM_BOOKINGS];
 const gtmCache = new Map<string, GtmPipelineRecord>();
 const sessionHistoryStore = new Map<string, ChatTurn[]>();
+
+function constantTimeEqual(left: string, right: string): boolean {
+  const a = Buffer.from(left);
+  const b = Buffer.from(right);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function requestAuthToken(req: express.Request): string {
+  const header = req.header('authorization') || '';
+  return req.header('x-api-key') || (header.startsWith('Bearer ') ? header.slice(7) : '');
+}
+
+function authenticateRequest(req: express.Request, res: express.Response): boolean {
+  if (!AUTH_REQUIRED) return true;
+  const token = requestAuthToken(req);
+  if (!API_AUTH_TOKEN || !constantTimeEqual(token, API_AUTH_TOKEN)) {
+    res.status(401).json({ error: 'Authentication required. Provide the GrowPilot API key.' });
+    return false;
+  }
+  return true;
+}
+
+function issueSessionId(tenantId: string): string {
+  const id = `sess_${crypto.randomBytes(18).toString('hex')}`;
+  sessionTokens.set(id, { tenantId, expiresAt: Date.now() + 30 * 60 * 1000 });
+  return id;
+}
+
+function getSessionId(raw: unknown, tenantId: string): string {
+  if (typeof raw === 'string' && /^[a-zA-Z0-9_-]{8,100}$/.test(raw)) {
+    const existing = sessionTokens.get(raw);
+    if (existing && existing.expiresAt > Date.now() && existing.tenantId === tenantId) {
+      existing.expiresAt = Date.now() + 30 * 60 * 1000;
+      return raw;
+    }
+  }
+  return issueSessionId(tenantId);
+}
 
 let telemetryLedger = {
   totalRequests: 0,
@@ -569,10 +616,11 @@ async function startServer() {
 
   app.use((req, res, next) => {
     const origin = req.headers.origin;
-    if (origin && (ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.includes(origin))) {
+    const devOrigin = /^https?:\/\/localhost(?::\d+)?$/i.test(origin || '') || /^https?:\/\/127\.0\.0\.1(?::\d+)?$/i.test(origin || '');
+    if (origin && (ALLOWED_ORIGINS.includes(origin) || (!AUTH_REQUIRED && ALLOWED_ORIGINS.length === 0 && devOrigin))) {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Vary', 'Origin');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, Idempotency-Key, X-Tenant-ID');
       res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
       res.setHeader('Access-Control-Max-Age', '600');
     }
@@ -584,10 +632,28 @@ async function startServer() {
   });
 
   app.use(express.json({ limit: '2mb' }));
+  app.use((req, res, next) => {
+    const now = Date.now();
+    const key = `${req.ip}:${requestAuthToken(req).slice(0, 16)}`;
+    const bucket = requestBuckets.get(key);
+    if (!bucket || now - bucket.startedAt >= RATE_LIMIT_WINDOW_MS) {
+      requestBuckets.set(key, { startedAt: now, count: 1 });
+    } else if (++bucket.count > MAX_REQUESTS_PER_WINDOW) {
+      res.setHeader('Retry-After', String(Math.ceil((RATE_LIMIT_WINDOW_MS - (now - bucket.startedAt)) / 1000)));
+      res.status(429).json({ error: 'Rate limit exceeded. Please retry shortly.' });
+      return;
+    }
+    if (requestBuckets.size > 10_000) {
+      for (const [bucketKey, value] of requestBuckets) if (now - value.startedAt >= RATE_LIMIT_WINDOW_MS) requestBuckets.delete(bucketKey);
+    }
+    next();
+  });
 
   // 1. Get full application state & telemetry
-  app.get('/api/state', (_req, res) => {
+  app.get('/api/state', (req, res) => {
+    if (!authenticateRequest(req, res)) return;
     res.json({
+      // CRM and prospect content is private. It is returned only to an authenticated operator.
       faqs: faqsStore,
       gtmRecords: gtmRecordsStore,
       crmBookings: crmBookingsStore,
@@ -615,6 +681,7 @@ async function startServer() {
 
   // 2. Clear Layer 0 Cache (for testing Cold Run vs Cache Hit)
   app.post('/api/cache/clear', (_req, res) => {
+    if (!authenticateRequest(_req, res)) return;
     gtmCache.clear();
     res.json({
       cleared: true,
@@ -624,6 +691,7 @@ async function startServer() {
 
   // 3. Add a custom FAQ to the Layer 0 Knowledge Base
   app.post('/api/faq/add', (req, res) => {
+    if (!authenticateRequest(req, res)) return;
     const { category, question, keywords, answer } = req.body || {};
     if (!question || !answer) {
       res.status(400).json({ error: 'Both question and answer are required.' });
@@ -652,6 +720,7 @@ async function startServer() {
 
   // 4. Autonomous GTM Engineering Pipeline (Scrape/Strip -> ICP Score Gate -> Grounded Generation -> CRM)
   app.post('/api/gtm/analyze', async (req, res) => {
+    if (!authenticateRequest(req, res)) return;
     const startMs = Date.now();
     const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
     const companyName = body.companyName === undefined ? 'Target Prospect' : body.companyName;
@@ -1068,10 +1137,22 @@ async function startServer() {
 
   // 5. 24/7 Cached FAQ & WhatsApp Lead Qualification Agent
   app.post('/api/agent/chat', async (req, res) => {
+    if (!authenticateRequest(req, res)) return;
     const startMs = Date.now();
+    const idempotencyKey = req.header('idempotency-key')?.trim() || '';
+    if (idempotencyKey) {
+      const cached = idempotencyResults.get(idempotencyKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        res.setHeader('X-Idempotent-Replay', 'true');
+        res.json(cached.result);
+        return;
+      }
+      if (cached) idempotencyResults.delete(idempotencyKey);
+    }
     const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
     const message = body.message === undefined ? '' : body.message;
-    const sessionId = body.sessionId === undefined ? 'default-session' : body.sessionId;
+    const tenantId = (req.header('x-tenant-id') || 'default').trim().slice(0, 80) || 'default';
+    const sessionId = getSessionId(body.sessionId, tenantId);
     const modelPreference = body.modelPreference === undefined ? 'gemini-3.5-flash-lite' : body.modelPreference;
     const channel = body.channel === undefined ? 'WhatsApp Business' : body.channel;
 
@@ -1111,7 +1192,7 @@ async function startServer() {
         latencyMs: 2,
       });
 
-      res.json({
+      const blockedPayload = {
         reply: blockedReply,
         trace: {
           layerTriggered: 'Layer 5 Prompt-Injection Screen (Blocked)',
@@ -1126,7 +1207,9 @@ async function startServer() {
         },
         crmBookings: crmBookingsStore,
         telemetry: telemetryLedger,
-      });
+      };
+      if (idempotencyKey) idempotencyResults.set(idempotencyKey, { expiresAt: Date.now() + IDEMPOTENCY_TTL_MS, result: blockedPayload });
+      res.json(blockedPayload);
       return;
     }
 
@@ -1157,7 +1240,7 @@ async function startServer() {
       );
       persistState();
 
-      res.json({
+      const faqPayload = {
         reply: faqMatch.faq.answer,
         trace: {
           layerTriggered: `Layer 0 Exact/Normalized FAQ Cache (${faqMatch.faq.category})`,
@@ -1174,7 +1257,9 @@ async function startServer() {
         },
         crmBookings: crmBookingsStore,
         telemetry: telemetryLedger,
-      });
+      };
+      if (idempotencyKey) idempotencyResults.set(idempotencyKey, { expiresAt: Date.now() + IDEMPOTENCY_TTL_MS, result: faqPayload });
+      res.json(faqPayload);
       return;
     }
 
@@ -1351,7 +1436,7 @@ async function startServer() {
     );
     persistState();
 
-    res.json({
+    const responsePayload = {
       reply: replyText,
       trace: {
         layerTriggered: `Layer 1 Smallest-Model Router (${costMetrics.modelLabel})`,
@@ -1371,7 +1456,14 @@ async function startServer() {
       },
       crmBookings: crmBookingsStore,
       telemetry: telemetryLedger,
-    });
+    };
+    if (idempotencyKey) {
+      idempotencyResults.set(idempotencyKey, { expiresAt: Date.now() + IDEMPOTENCY_TTL_MS, result: responsePayload });
+      if (idempotencyResults.size > 10_000) {
+        for (const [key, value] of idempotencyResults) if (value.expiresAt <= Date.now()) idempotencyResults.delete(key);
+      }
+    }
+    res.json(responsePayload);
   });
 
   // 6. Real-Time Voice Agent WebSocket Server on `/live`
@@ -1379,9 +1471,20 @@ async function startServer() {
   const viteHmrWss = new WebSocketServer({ noServer: true });
 
   httpServer.on('upgrade', (request, socket, head) => {
-    const pathname = new URL(request.url || '/', 'http://localhost:3000').pathname;
+    const upgradeUrl = new URL(request.url || '/', 'http://localhost:3000');
+    const pathname = upgradeUrl.pathname;
     // `/live` is the public path; the serverless rewrite may hand over the destination instead.
     if (pathname === '/live' || pathname === LIVE_FUNCTION_PATH) {
+      const origin = request.headers.origin || '';
+      const originAllowed = !AUTH_REQUIRED
+        ? (ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.includes(origin) || /^https?:\/\/(localhost|127\.0\.0\.1)(?::\d+)?$/i.test(origin))
+        : ALLOWED_ORIGINS.includes(origin);
+      const queryToken = upgradeUrl.searchParams.get('apiKey') || '';
+      if (!originAllowed || (AUTH_REQUIRED && (!API_AUTH_TOKEN || !constantTimeEqual(queryToken, API_AUTH_TOKEN)))) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
+        return;
+      }
       wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit('connection', ws, request);
       });
