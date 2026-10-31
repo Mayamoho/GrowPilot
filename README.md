@@ -654,6 +654,19 @@ create table if not exists public.growpilot_state (
 
 Add `SUPABASE_URL`, `SUPABASE_SECRET_KEY` (the new `sb_secret_...` key; legacy `SUPABASE_SERVICE_ROLE_KEY` also works), and `SUPABASE_STATE_TABLE=growpilot_state` to Vercel Production. The secret/service-role key must stay server-only. For distributed rate limiting and ephemeral coordination, create a free Upstash Redis database and add `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`. The API uses Upstash's HTTPS REST interface, so it works from Vercel without a TCP Redis connection. [Upstash REST API](https://upstash.com/docs/redis/features/restapi) and [Supabase Free Plan](https://supabase.com/docs/guides/platform/billing-on-supabase).
 
+#### Upstash Redis setup
+
+1. Create an account at [Upstash](https://console.upstash.com/) and choose **Redis → Create database**.
+2. Keep the free plan, choose a nearby region, and create the database.
+3. Open the database's **Connect** section and select **REST API**.
+4. Copy the HTTPS endpoint into `UPSTASH_REDIS_REST_URL`.
+5. Copy the standard read/write token into `UPSTASH_REDIS_REST_TOKEN`. Do not use the read-only token: GrowPilot needs `INCR` and `EXPIRE` for distributed rate limiting.
+6. In Vercel, open **Settings → Environment Variables** and add both variables for **Production**.
+7. Redeploy with `vercel deploy --prod`.
+8. Confirm `GET /api/state` reports `engine.infrastructure.redis: true` and `coordination: "upstash-redis"`.
+
+Upstash documents the REST endpoint and token in the database Connect panel; the REST API is intended for serverless runtimes where a persistent TCP connection is unsuitable. [Upstash REST API credentials and commands](https://upstash.com/docs/redis/features/restapi)
+
 When these variables are absent, GrowPilot continues using the local JSON/process-local fallback and reports the active mode in `GET /api/state.engine.infrastructure`.
 
 Every HTTP response now carries an `X-Request-ID` and W3C `traceparent` header, while the server writes structured `http_span` JSON logs. This is OpenTelemetry-compatible correlation without requiring a paid collector; set `OTEL_EXPORTER_OTLP_ENDPOINT` only when you have a free/self-hosted OTLP collector available. [OpenTelemetry JavaScript](https://opentelemetry.io/docs/languages/js/)
