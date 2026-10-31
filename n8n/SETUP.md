@@ -27,6 +27,12 @@ The easiest route is importing through the n8n UI:
 N8N_WEBHOOK_URL=http://127.0.0.1:5680/webhook/growpilot-lead
 ```
 
+`N8N_USER` and `N8N_PASSWORD` are optional **Webhook Basic Auth** credentials that you create in the Webhook node. They are not the n8n owner-account username and password. If Webhook Authentication is `None`, leave both variables empty. For the Docker agent, keep the in-network URL instead:
+
+```dotenv
+CONTAINER_N8N_WEBHOOK_URL=http://n8n:5678/webhook/growpilot-lead
+```
+
 Restart the agent after changing `.env`:
 
 ```bash

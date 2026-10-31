@@ -114,7 +114,7 @@ GEMINI_API_KEY="AIzaSyYourKeyHere"
 PORT=3000
 OLLAMA_MODEL="llama3.2:3b"
 OLLAMA_BASE_URL="http://127.0.0.1:11434"
-N8N_WEBHOOK_URL="http://127.0.0.1:5678/webhook/growpilot-lead"
+N8N_WEBHOOK_URL="http://127.0.0.1:5680/webhook/growpilot-lead"
 GEMINI_MAX_ATTEMPTS="4"
 GEMINI_QUOTA_FALLBACK="1"
 ```
@@ -212,6 +212,18 @@ docker compose down
 ## Automation Contract: What GrowPilot Actually Sends
 
 GrowPilot is the **agent**; n8n is the **arm that reaches your spreadsheet, calendar and WhatsApp**. The server POSTs to `N8N_WEBHOOK_URL` whenever something worth acting on happens. Build one workflow with a *Webhook (POST)* trigger at path `growpilot-lead` and everything below lands in it.
+
+#### Webhook URL matrix
+
+Use exactly one URL based on where the GrowPilot server runs:
+
+| GrowPilot server | Correct `N8N_WEBHOOK_URL` |
+| --- | --- |
+| Host process (`npm run dev`) → Docker n8n | `http://127.0.0.1:5680/webhook/growpilot-lead` |
+| GrowPilot agent inside Docker Compose | `http://n8n:5678/webhook/growpilot-lead` |
+| Vercel → n8n exposed through HTTPS/tunnel | `https://<public-n8n-host>/webhook/growpilot-lead` |
+
+`N8N_USER` and `N8N_PASSWORD` are **not** the n8n owner-account login. They are credentials that you choose in the Webhook node when you set its Authentication to **Basic Auth**. The agent sends them as HTTP Basic Auth on every webhook request. If the Webhook node is left at Authentication **None**, leave these two variables empty.
 
 ### Fastest free setup (self-hosted n8n, no n8n Cloud account, $0)
 

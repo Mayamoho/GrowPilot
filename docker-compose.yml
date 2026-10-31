@@ -25,6 +25,8 @@ services:
       - N8N_WEBHOOK_URL=${CONTAINER_N8N_WEBHOOK_URL:-http://n8n:5678/webhook/growpilot-lead}
       - N8N_USER=${N8N_USER:-}
       - N8N_PASSWORD=${N8N_PASSWORD:-}
+      - N8N_WEBHOOK_SECRET=${N8N_WEBHOOK_SECRET:-}
+      - N8N_MAX_ATTEMPTS=${N8N_MAX_ATTEMPTS:-3}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
       - GROWPILOT_STATE_FILE=/data/growpilot-state.json
     volumes:
