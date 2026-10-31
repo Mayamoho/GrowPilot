@@ -103,6 +103,7 @@ const OLLAMA_TIMEOUT_MS = Math.max(5_000, Number(process.env.OLLAMA_TIMEOUT_MS |
 const GEMINI_MAX_ATTEMPTS = Math.max(1, Number(process.env.GEMINI_MAX_ATTEMPTS || 4));
 const GEMINI_REQUEST_TIMEOUT_MS = Math.max(5_000, Number(process.env.GEMINI_REQUEST_TIMEOUT_MS || 25_000));
 const GEMINI_GTM_MAX_ATTEMPTS = Math.max(1, Number(process.env.GEMINI_GTM_MAX_ATTEMPTS || 2));
+const GEMINI_GTM_TIMEOUT_MS = Math.max(5_000, Number(process.env.GEMINI_GTM_TIMEOUT_MS || 12_000));
 // Unset keeps the quota degrade on. An explicit empty value (or 0/false) makes a quota-blocked
 // tier report the error instead of silently re-billing a cheaper model.
 const rawQuotaFallback = process.env.GEMINI_QUOTA_FALLBACK;
@@ -606,9 +607,10 @@ async function generateWithGemini(
   ai: GoogleGenAI,
   request: { model: string; contents: string; config: Record<string, unknown> },
   logTag: string,
-  options: { maxAttempts?: number; fallbackModel?: string } = {}
+  options: { maxAttempts?: number; fallbackModel?: string; timeoutMs?: number } = {}
 ): Promise<GeminiResult> {
   const maxAttempts = options.maxAttempts ?? GEMINI_MAX_ATTEMPTS;
+  const timeoutMs = options.timeoutMs ?? GEMINI_REQUEST_TIMEOUT_MS;
   const fallbackModel = GEMINI_QUOTA_FALLBACK_ENABLED ? options.fallbackModel : undefined;
 
   const attempt = async (model: string): Promise<GeminiResult> => {
@@ -619,7 +621,7 @@ async function generateWithGemini(
           model,
         } as Parameters<GoogleGenAI['models']['generateContent']>[0]);
         const timeout = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Gemini request timed out after ${GEMINI_REQUEST_TIMEOUT_MS}ms`)), GEMINI_REQUEST_TIMEOUT_MS)
+          setTimeout(() => reject(new Error(`Gemini request timed out after ${timeoutMs}ms`)), timeoutMs)
         );
         const res = await Promise.race([generation, timeout]);
         const usage = res.usageMetadata as
@@ -1161,7 +1163,7 @@ async function startServer() {
               },
             },
             'gtm',
-            { fallbackModel: resolveApiModelId('gemini-3.5-flash-lite'), maxAttempts: GEMINI_GTM_MAX_ATTEMPTS }
+            { fallbackModel: resolveApiModelId('gemini-3.5-flash-lite'), maxAttempts: 1, timeoutMs: GEMINI_GTM_TIMEOUT_MS }
           );
 
           if (result.degraded) {
@@ -1495,7 +1497,7 @@ async function startServer() {
                 },
               },
               'agent',
-              { fallbackModel: resolveApiModelId('gemini-3.5-flash-lite'), maxAttempts: 2 }
+            { fallbackModel: resolveApiModelId('gemini-3.5-flash-lite'), maxAttempts: GEMINI_GTM_MAX_ATTEMPTS, timeoutMs: GEMINI_GTM_TIMEOUT_MS }
             );
             if (result.degraded) {
               billedTier = 'gemini-3.5-flash-lite';
